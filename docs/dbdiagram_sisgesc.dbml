@@ -1,0 +1,640 @@
+// ============================================================
+// DIAGRAMA — SISTEMA DE GESTÃO ESCOLAR (SisGESC)
+// Módulos: Acadêmico | Financeiro | RH | Star Schema OLAP
+// ============================================================
+// Critérios de PK:
+//   Natural quando: estável, única, simples, controlada pelo sistema
+//   Composta quando: N:N ou entidade dependente sem chave própria
+//   Surrogate quando: sem chave natural clara ou composta muito pesada como FK
+// ============================================================
+
+// ============================================================
+// TABELAS DE APOIO (domínio)
+// PK: o próprio valor — chave natural, estável, única
+// ============================================================
+
+// Ex: 'Ativo', 'Inativo'
+Table status_aluno {
+  status varchar(20) [primary key]
+}
+// Ex: 'Cursando', 'Concluído', 'Trancado', 'Cancelado'
+Table status_matricula {
+  status varchar(20) [primary key]
+}
+// Ex: 'Cursando', 'Aprovado', 'Reprovado'
+Table status_matricula_turma {
+  status varchar(20) [primary key]
+}
+// Ex: 'Ativo', 'Afastado', 'Desligado'
+Table status_funcionario {
+  status varchar(20) [primary key]
+}
+// Ex: 'Ativo', 'Encerrado', 'Suspenso', 'Cancelado'
+Table status_contrato {
+  status varchar(20) [primary key]
+}
+// Ex: 'Pendente', 'Pago', 'Atrasado', 'Cancelado'
+Table status_mensalidade {
+  status varchar(20) [primary key]
+}
+// Ex: 'Pendente', 'Pago', 'Cancelado'
+Table status_pagamento {
+  status varchar(20) [primary key]
+}
+// Ex: 'Planejada', 'Em andamento', 'Concluída', 'Cancelada'
+Table status_ferias {
+  status varchar(20) [primary key]
+}
+// Ex: 'Em processamento', 'Paga', 'Cancelada'
+Table status_folha {
+  status varchar(20) [primary key]
+}
+// Ex: 'Manhã', 'Tarde', 'Noite'
+Table turno {
+  turno varchar(10) [primary key]
+}
+// Ex: 'Corrente', 'Poupança', 'Salário'
+Table tipo_conta_bancaria {
+  tipo varchar(20) [primary key]
+}
+// Ex: 'Atraso', 'Falta', 'Saída antecipada'
+Table tipo_ocorrencia {
+  tipo varchar(30) [primary key]
+}
+// Ex: 'Filho Biológico', 'Filho Adotivo', 'Cônjuge', 'Pai', 'Mãe', 'Outro'
+Table tipo_parentesco {
+  tipo varchar(30) [primary key]
+}
+// Ex: 'Provento', 'Desconto'
+Table tipo_evento_folha {
+  tipo varchar(20) [primary key]
+}
+// Ex: 'Júnior', 'Pleno', 'Sênior'
+Table nivel_cargo {
+  nivel varchar(10) [primary key]
+}
+// Ex: 'Entrada', 'Saída', 'Intervalo', 'Retorno intervalo'
+Table tipo_ponto {
+  tipo varchar(30) [primary key]
+}
+// Ex: 'Pix', 'Boleto', 'Cartão', 'Transferência', 'Dinheiro'
+Table metodo_pagamento {
+  metodo varchar(30) [primary key]
+}
+// Adicionado na v13 — correção do feedback da 1ª entrega
+// Ex: 'Técnico', 'Tecnólogo', 'Bacharelado', 'Pós-Graduação'
+Table nivel_ensino {
+  nivel varchar(20) [primary key]
+}
+
+// ============================================================
+// MÓDULO ACADÊMICO
+// ============================================================
+
+// PK natural — codigo_curso gerado e controlado pelo sistema
+// nivel_ensino adicionado na v13 (correção da 1ª entrega)
+Table curso {
+  codigo_curso       char(3)      [primary key]
+  nome_curso         varchar(60)  [not null]
+  descricao          text         [not null]
+  nivel_ensino       varchar(20)  [not null]
+  ativo              boolean      [not null, default: true]
+  data_criacao       datetime     [not null, default: `now()`]
+  ultima_atualizacao datetime     [not null, default: `now()`]
+}
+
+// PK natural — codigo_materia gerado e controlado pelo sistema
+Table materia {
+  codigo_materia     char(5)      [primary key]
+  nome_materia       varchar(60)  [not null]
+  carga_horaria      int          [not null]
+  // CHECK(carga_horaria > 0)
+  ativo              boolean      [not null, default: true]
+  data_criacao       datetime     [not null, default: `now()`]
+  ultima_atualizacao datetime     [not null, default: `now()`]
+}
+
+// N:N curso x materia — grade base vigente desde a criação do curso
+// PK composta natural
+// 2FN: obrigatoria e semestre_recomendado dependem do par completo ✓
+// 3FN: sem dependências transitivas ✓
+Table curso_materia {
+  codigo_curso         char(3)  [primary key]
+  codigo_materia       char(5)  [primary key]
+  obrigatoria          boolean  [not null, default: true]
+  semestre_recomendado int
+}
+
+// Grade revisada — alterações a partir de um semestre específico
+// PK composta natural: (codigo_curso, codigo_materia, ano, semestre)
+Table curso_materia_revisao {
+  codigo_curso         char(3)  [primary key]
+  codigo_materia       char(5)  [primary key]
+  ano                  year     [primary key]
+  semestre             int      [primary key]
+  obrigatoria          boolean  [not null, default: true]
+  semestre_recomendado int
+  ativo                boolean  [not null, default: true]
+}
+
+// PK surrogate — fk_curso é nullable, PK composta com NULL é inválida em SQL
+// fk_curso NULL = calendário institucional | preenchido = específico do curso
+Table calendario_academico {
+  pk_id_calendario int          [primary key, increment]
+  ano              year         [not null]
+  semestre         int          [not null]
+  data_inicio      date         [not null]
+  data_fim         date         [not null]
+  descricao        varchar(100)
+  fk_curso         char(3)
+  ativo            boolean      [not null, default: true]
+}
+
+// PK natural — rga gerado pelo sistema, estável e imutável
+Table aluno {
+  rga                char(8)     [primary key]
+  cpf                char(11)    [not null, unique]
+  nome               varchar(50) [not null]
+  sobrenome          varchar(50) [not null]
+  data_nascimento    date        [not null]
+  status             varchar(20) [not null]
+  data_criacao       datetime    [not null, default: `now()`]
+  ultima_atualizacao datetime    [not null, default: `now()`]
+}
+
+// PK surrogate — sem chave natural simples para matrícula
+// UQ_matricula_ativa: UNIQUE(fk_rga, fk_curso) WHERE status = 'Cursando'
+// ano_curso (DERIVADO) — NÃO armazenar
+Table matricula {
+  pk_id_matricula    int         [primary key, increment]
+  fk_rga             char(8)     [not null]
+  fk_curso           char(3)     [not null]
+  data_matricula     date        [not null]
+  status             varchar(20) [not null]
+  ano_ingresso       int         [not null]
+  data_criacao       datetime    [not null, default: `now()`]
+  ultima_atualizacao datetime    [not null, default: `now()`]
+}
+
+// Papel específico de funcionário docente — PK herdada (1:1)
+Table professor {
+  fk_rgf        char(5)      [primary key]
+  formacao      varchar(100)
+  especialidade varchar(100)
+  ativo         boolean      [not null, default: true]
+}
+
+// PK surrogate — composta seria pesada demais como FK
+// UQ_turma: UNIQUE(fk_curso, fk_materia, fk_id_calendario, turno)
+Table turma {
+  pk_id_turma      int         [primary key, increment]
+  fk_rgf           char(5)     [not null]
+  fk_curso         char(3)     [not null]
+  fk_materia       char(5)     [not null]
+  fk_id_calendario int         [not null]
+  turno            varchar(10) [not null]
+  limite_alunos    int         [not null]
+  // CHECK(limite_alunos > 0)
+}
+
+// N:N matricula x turma — PK composta natural
+// nota_final (DERIVADO) = SUM(nota * peso) / SUM(peso) — via view
+Table matricula_turma {
+  fk_id_matricula int         [primary key]
+  fk_id_turma     int         [primary key]
+  status          varchar(20) [not null]
+}
+
+// PK surrogate — sem chave natural simples
+Table avaliacao {
+  pk_id_avaliacao int          [primary key, increment]
+  fk_id_turma     int          [not null]
+  nome_atividade  varchar(60)  [not null]
+  peso            decimal(4,2) [not null]
+  // CHECK(peso > 0)
+  data_aplicacao  date
+}
+
+// PK composta natural — (fk_id_avaliacao, fk_id_matricula)
+// fk_id_turma REMOVIDO — redundante via avaliacao (3FN)
+Table nota {
+  fk_id_avaliacao int          [primary key]
+  fk_id_matricula int          [primary key]
+  nota_atividade  decimal(4,2) [not null]
+  // CHECK(nota_atividade >= 0)
+}
+
+// PK composta natural — (fk_id_matricula, fk_id_turma, data_aula)
+Table frequencia {
+  fk_id_matricula int     [primary key]
+  fk_id_turma     int     [primary key]
+  data_aula       date    [primary key]
+  presente        boolean [not null]
+  justificativa   text
+}
+
+// ============================================================
+// MÓDULO FINANCEIRO
+// ============================================================
+
+// 1 matricula → 1 contrato (1:1) — toda cobrança nasce aqui
+// PK surrogate
+Table contrato {
+  pk_id_contrato               int           [primary key, increment]
+  fk_id_matricula              int           [not null, unique]
+  data_assinatura              date          [not null]
+  data_inicio_vigencia         date          [not null]
+  data_fim_vigencia            date
+  valor_mensalidade_referencia decimal(10,2) [not null]
+  // CHECK(valor_mensalidade_referencia > 0)
+  status                       varchar(20)   [not null]
+  observacoes                  text
+  data_criacao                 datetime      [not null, default: `now()`]
+  ultima_atualizacao           datetime      [not null, default: `now()`]
+}
+
+// 1 contrato → N bolsas ao longo do tempo
+Table bolsa {
+  pk_id_bolsa    int          [primary key, increment]
+  fk_id_contrato int          [not null]
+  percentual     decimal(5,2) [not null]
+  // CHECK(percentual > 0 AND percentual <= 100)
+  data_inicio    date         [not null]
+  data_fim       date
+  ativo          boolean      [not null, default: true]
+}
+
+// PK composta natural — (fk_id_contrato, periodo)
+// valor_final (DERIVADO) = valor_base - valor_desconto — via view
+// valor_base e valor_desconto: snapshots intencionais do momento da geração
+Table mensalidade {
+  fk_id_contrato  int           [primary key]
+  periodo         char(7)       [primary key]
+  valor_base      decimal(10,2) [not null]
+  // CHECK(valor_base > 0)
+  valor_desconto  decimal(10,2) [not null, default: 0]
+  // CHECK(valor_desconto >= 0 AND valor_desconto <= valor_base)
+  data_vencimento date          [not null]
+  status          varchar(20)   [not null]
+}
+
+// 1 mensalidade → 0 ou 1 atraso (1:1) — PK composta herdada
+Table atraso_mensalidade {
+  fk_id_contrato  int           [primary key]
+  periodo         char(7)       [primary key]
+  dias_atraso     int           [not null]
+  // CHECK(dias_atraso > 0)
+  valor_multa     decimal(10,2) [not null]
+  valor_juros     decimal(10,2) [not null]
+  data_calculo    datetime      [not null, default: `now()`]
+}
+
+// PK surrogate — FK composta (fk_id_contrato, periodo) → mensalidade
+// Pix/Boleto delegados a API externa — banco guarda apenas id_transacao_externo
+Table pagamento {
+  pk_id_pagamento      int           [primary key, increment]
+  fk_id_contrato       int           [not null]
+  periodo              char(7)       [not null]
+  metodo               varchar(30)   [not null]
+  data_pagamento       date          [not null]
+  valor_pago           decimal(10,2) [not null]
+  // CHECK(valor_pago > 0)
+  status               varchar(20)   [not null]
+  id_transacao_externo varchar(100)
+}
+
+// PK surrogate
+Table pagamento_a_vista {
+  pk_id_avista   int           [primary key, increment]
+  fk_id_contrato int           [not null]
+  metodo         varchar(30)   [not null]
+  valor_total    decimal(10,2) [not null]
+  data_pagamento date          [not null]
+  status         varchar(20)   [not null]
+}
+
+// N:N pagamento_a_vista x mensalidade — PK composta natural
+Table pagamento_avista_mensalidade {
+  fk_id_avista   int     [primary key]
+  fk_id_contrato int     [primary key]
+  periodo        char(7) [primary key]
+}
+
+// ============================================================
+// MÓDULO RH
+// ============================================================
+
+// PK natural — nome_departamento único e estável
+Table departamento {
+  nome_departamento varchar(100) [primary key]
+  descricao         text
+  ativo             boolean      [not null, default: true]
+}
+
+// PK natural — codigo_cargo controlado pelo sistema
+Table cargo {
+  codigo_cargo      char(3)       [primary key]
+  nome_cargo        varchar(120)  [not null]
+  nome_departamento varchar(100)  [not null]
+  nivel             varchar(10)   [not null]
+  salario_base      decimal(10,2) [not null]
+  // CHECK(salario_base > 0)
+  ativo             boolean       [not null, default: true]
+}
+
+// PK natural — rgf gerado pelo sistema, estável e imutável
+Table funcionario {
+  rgf                char(5)      [primary key]
+  cpf                char(11)     [not null, unique]
+  nome               varchar(50)  [not null]
+  sobrenome          varchar(50)  [not null]
+  data_nascimento    date         [not null]
+  codigo_cargo       char(3)      [not null]
+  data_admissao      date         [not null]
+  data_desligamento  date
+  status             varchar(20)  [not null]
+  data_criacao       datetime     [not null, default: `now()`]
+  ultima_atualizacao datetime     [not null, default: `now()`]
+}
+
+// 1:1 com funcionario — PK herdada
+Table documentos_trabalhistas {
+  fk_rgf         char(5)  [primary key]
+  pis            char(11) [not null, unique]
+  numero_ctps    char(7)  [not null]
+  serie_ctps     char(4)  [not null]
+  titulo_eleitor char(12) [not null, unique]
+}
+
+// 1 funcionario → N dependentes
+Table dependente {
+  rgd                    char(5)     [primary key]
+  fk_rgf                 char(5)     [not null]
+  cpf                    char(11)    [not null]
+  nome                   varchar(50) [not null]
+  sobrenome              varchar(50) [not null]
+  data_nascimento        date        [not null]
+  parentesco             varchar(30) [not null]
+  dependente_ir          boolean     [not null]
+  dependente_plano_saude boolean     [not null]
+  ativo                  boolean     [not null, default: true]
+}
+
+// PK surrogate — sem chave natural simples para conta bancária
+// UQ_conta_principal: UNIQUE(fk_rgf) WHERE principal = true
+Table conta_banco_funcionario {
+  pk_id_conta   int         [primary key, increment]
+  fk_rgf        char(5)     [not null]
+  banco         varchar(50) [not null]
+  agencia       varchar(10) [not null]
+  conta         varchar(20) [not null]
+  digito_conta  varchar(5)
+  tipo_conta    varchar(20) [not null]
+  principal     boolean     [not null, default: false]
+  ativo         boolean     [not null, default: true]
+}
+
+// PK composta natural — (fk_rgf, data_hora)
+// TR_ponto_alternancia: registros devem alternar Entrada/Saída
+Table ponto {
+  fk_rgf    char(5)   [primary key]
+  data_hora datetime  [primary key]
+  tipo      varchar(30) [not null]
+}
+
+// PK surrogate — mesmo funcionário pode ter 2 ocorrências no mesmo dia
+Table ocorrencia_desconto {
+  pk_id_ocorrencia int         [primary key, increment]
+  fk_rgf           char(5)     [not null]
+  tipo_ocorrencia  varchar(30) [not null]
+  data_ocorrencia  date        [not null]
+  minutos          int         [not null]
+  // CHECK(minutos > 0)
+}
+
+// PK natural — nome_evento único e estável
+Table evento_folha {
+  nome_evento varchar(50) [primary key]
+  tipo        varchar(20) [not null]
+}
+
+// PK composta natural — (fk_rgf, periodo)
+// salario_liquido (DERIVADO) — NÃO armazenar, via view
+Table folha_pagamentos {
+  fk_rgf         char(5)       [primary key]
+  periodo        char(7)       [primary key]
+  salario_bruto  decimal(10,2) [not null]
+  // CHECK(salario_bruto > 0)
+  data_pagamento date
+  status         varchar(20)   [not null]
+}
+
+// PK composta natural — (fk_rgf, periodo, nome_evento)
+// valor sempre positivo — tipo em evento_folha determina sinal
+Table folha_evento {
+  fk_rgf      char(5)       [primary key]
+  periodo     char(7)       [primary key]
+  nome_evento varchar(50)   [primary key]
+  valor       decimal(10,2) [not null]
+  // CHECK(valor > 0)
+}
+
+// N:N folha x ocorrencia — PK composta natural
+Table folha_ocorrencia {
+  fk_rgf           char(5) [primary key]
+  periodo          char(7) [primary key]
+  pk_id_ocorrencia int     [primary key]
+}
+
+// PK surrogate — edge case: reajuste no mesmo dia gera dois registros
+// UQ_salario_vigente: UNIQUE(fk_rgf) WHERE data_fim IS NULL
+Table historico_salario {
+  pk_id_historico  int           [primary key, increment]
+  fk_rgf           char(5)       [not null]
+  salario          decimal(10,2) [not null]
+  // CHECK(salario > 0)
+  data_inicio      date          [not null]
+  data_fim         date
+  motivo_alteracao varchar(100)
+}
+
+Table periodo_aquisitivo {
+  pk_id_periodo int     [primary key, increment]
+  fk_rgf        char(5) [not null]
+  data_inicio   date    [not null]
+  data_fim      date    [not null]
+  dias_direito  int     [not null]
+  // CHECK(dias_direito >= 15 AND dias_direito <= 30)
+}
+
+Table ferias {
+  pk_id_ferias  int         [primary key, increment]
+  fk_id_periodo int         [not null]
+  data_inicio   date        [not null]
+  data_fim      date        [not null]
+  status        varchar(20) [not null]
+}
+
+// 1:1 com periodo_aquisitivo — PK herdada
+Table abono_ferias {
+  fk_id_periodo    int           [primary key]
+  dias_vendidos    int           [not null]
+  valor            decimal(10,2) [not null]
+  data_solicitacao date          [not null, default: `now()`]
+}
+
+// ============================================================
+// STAR SCHEMA OLAP — banco erp_escolar_olap
+// ============================================================
+
+// PK natural YYYYMM — valor identifica unicamente o período
+Table dim_tempo {
+  pk_id_tempo int         [primary key, note: 'YYYYMM ex: 202402']
+  ano         year        [not null]
+  mes         tinyint     [not null]
+  nome_mes    varchar(20) [not null]
+  trimestre   tinyint     [not null]
+  semestre    tinyint     [not null]
+}
+
+// PK surrogate — isolamento do OLTP, suporta SCD futura
+Table dim_aluno {
+  pk_id_aluno    int          [primary key, increment]
+  rga            char(8)      [unique]
+  nome_completo  varchar(202) [not null]
+  ano_ingresso   year         [not null]
+  curso_ingresso char(3)      [not null, note: 'snapshot']
+}
+
+// PK surrogate
+Table dim_curso {
+  pk_id_curso  int          [primary key, increment]
+  codigo_curso char(3)      [unique]
+  nome_curso   varchar(100) [not null]
+  nivel_ensino varchar(30)  [not null]
+}
+
+// PK surrogate — não existe no OLTP, derivada no ETL
+// Mapeamento: ADS→TI, ENF→Saúde, LOG→Gestão
+Table dim_unidade {
+  pk_id_unidade int         [primary key, increment]
+  nome_unidade  varchar(60) [unique, not null]
+}
+
+// Grain: 1 linha por mensalidade gerada no OLTP
+// Métricas aditivas: valor_base, valor_desconto, valor_liquido, valor_pago
+Table ft_receita_mensalidade {
+  pk_id_fato         int           [primary key, increment]
+  fk_id_tempo        int           [not null]
+  fk_id_aluno        int           [not null]
+  fk_id_curso        int           [not null]
+  fk_id_unidade      int           [not null]
+  valor_base         decimal(10,2) [not null]
+  valor_desconto     decimal(10,2) [not null]
+  valor_liquido      decimal(10,2) [not null]
+  valor_pago         decimal(10,2) [not null]
+  status_mensalidade varchar(10)   [not null, note: 'degenerate dimension']
+  tem_bolsa          tinyint       [not null]
+}
+
+// ============================================================
+// REFERÊNCIAS — TABELAS DE APOIO
+// ============================================================
+
+Ref: nivel_ensino.nivel            < curso.nivel_ensino
+Ref: status_aluno.status           < aluno.status
+Ref: status_matricula.status       < matricula.status
+Ref: status_matricula_turma.status < matricula_turma.status
+Ref: status_funcionario.status     < funcionario.status
+Ref: status_contrato.status        < contrato.status
+Ref: status_mensalidade.status     < mensalidade.status
+Ref: status_pagamento.status       < pagamento.status
+Ref: status_pagamento.status       < pagamento_a_vista.status
+Ref: status_ferias.status          < ferias.status
+Ref: status_folha.status           < folha_pagamentos.status
+Ref: turno.turno                   < turma.turno
+Ref: tipo_conta_bancaria.tipo      < conta_banco_funcionario.tipo_conta
+Ref: tipo_ocorrencia.tipo          < ocorrencia_desconto.tipo_ocorrencia
+Ref: tipo_parentesco.tipo          < dependente.parentesco
+Ref: tipo_evento_folha.tipo        < evento_folha.tipo
+Ref: nivel_cargo.nivel             < cargo.nivel
+Ref: tipo_ponto.tipo               < ponto.tipo
+Ref: metodo_pagamento.metodo       < pagamento.metodo
+Ref: metodo_pagamento.metodo       < pagamento_a_vista.metodo
+
+// ============================================================
+// REFERÊNCIAS — MÓDULO ACADÊMICO
+// ============================================================
+
+Ref: curso.codigo_curso     < curso_materia.codigo_curso
+Ref: materia.codigo_materia < curso_materia.codigo_materia
+Ref: curso.codigo_curso     < curso_materia_revisao.codigo_curso
+Ref: materia.codigo_materia < curso_materia_revisao.codigo_materia
+Ref: curso.codigo_curso     < calendario_academico.fk_curso
+Ref: curso.codigo_curso     < matricula.fk_curso
+Ref: aluno.rga              < matricula.fk_rga
+Ref: funcionario.rgf        - professor.fk_rgf
+Ref: professor.fk_rgf       < turma.fk_rgf
+Ref: curso.codigo_curso     < turma.fk_curso
+Ref: materia.codigo_materia < turma.fk_materia
+Ref: calendario_academico.pk_id_calendario < turma.fk_id_calendario
+Ref: matricula.pk_id_matricula < matricula_turma.fk_id_matricula
+Ref: turma.pk_id_turma         < matricula_turma.fk_id_turma
+Ref: turma.pk_id_turma         < avaliacao.fk_id_turma
+Ref: avaliacao.pk_id_avaliacao < nota.fk_id_avaliacao
+Ref: matricula.pk_id_matricula < nota.fk_id_matricula
+Ref: matricula.pk_id_matricula < frequencia.fk_id_matricula
+Ref: turma.pk_id_turma         < frequencia.fk_id_turma
+
+// ============================================================
+// REFERÊNCIAS — MÓDULO FINANCEIRO
+// ============================================================
+
+Ref: matricula.pk_id_matricula  - contrato.fk_id_matricula
+Ref: contrato.pk_id_contrato    < bolsa.fk_id_contrato
+Ref: contrato.pk_id_contrato    < mensalidade.fk_id_contrato
+// FK composta: pagamento(fk_id_contrato, periodo) → mensalidade
+Ref: mensalidade.fk_id_contrato < pagamento.fk_id_contrato
+Ref: mensalidade.periodo        < pagamento.periodo
+// FK composta: atraso_mensalidade → mensalidade
+Ref: mensalidade.fk_id_contrato < atraso_mensalidade.fk_id_contrato
+Ref: mensalidade.periodo        < atraso_mensalidade.periodo
+Ref: contrato.pk_id_contrato    < pagamento_a_vista.fk_id_contrato
+// FK composta: pagamento_avista_mensalidade → mensalidade
+Ref: pagamento_a_vista.pk_id_avista < pagamento_avista_mensalidade.fk_id_avista
+Ref: mensalidade.fk_id_contrato     < pagamento_avista_mensalidade.fk_id_contrato
+Ref: mensalidade.periodo            < pagamento_avista_mensalidade.periodo
+
+// ============================================================
+// REFERÊNCIAS — MÓDULO RH
+// ============================================================
+
+Ref: departamento.nome_departamento < cargo.nome_departamento
+Ref: cargo.codigo_cargo             < funcionario.codigo_cargo
+Ref: funcionario.rgf                - documentos_trabalhistas.fk_rgf
+Ref: funcionario.rgf                < dependente.fk_rgf
+Ref: funcionario.rgf                < conta_banco_funcionario.fk_rgf
+Ref: funcionario.rgf                < ponto.fk_rgf
+Ref: funcionario.rgf                < ocorrencia_desconto.fk_rgf
+Ref: funcionario.rgf                < folha_pagamentos.fk_rgf
+// FK composta: folha_evento → folha_pagamentos
+Ref: folha_pagamentos.fk_rgf              < folha_evento.fk_rgf
+Ref: folha_pagamentos.periodo             < folha_evento.periodo
+Ref: evento_folha.nome_evento             < folha_evento.nome_evento
+// FK composta: folha_ocorrencia → folha_pagamentos
+Ref: folha_pagamentos.fk_rgf              < folha_ocorrencia.fk_rgf
+Ref: folha_pagamentos.periodo             < folha_ocorrencia.periodo
+Ref: ocorrencia_desconto.pk_id_ocorrencia < folha_ocorrencia.pk_id_ocorrencia
+Ref: funcionario.rgf                  < historico_salario.fk_rgf
+Ref: funcionario.rgf                  < periodo_aquisitivo.fk_rgf
+Ref: periodo_aquisitivo.pk_id_periodo < ferias.fk_id_periodo
+Ref: periodo_aquisitivo.pk_id_periodo - abono_ferias.fk_id_periodo
+
+// ============================================================
+// REFERÊNCIAS — STAR SCHEMA OLAP
+// ============================================================
+
+Ref: dim_tempo.pk_id_tempo      < ft_receita_mensalidade.fk_id_tempo
+Ref: dim_aluno.pk_id_aluno      < ft_receita_mensalidade.fk_id_aluno
+Ref: dim_curso.pk_id_curso      < ft_receita_mensalidade.fk_id_curso
+Ref: dim_unidade.pk_id_unidade  < ft_receita_mensalidade.fk_id_unidade
