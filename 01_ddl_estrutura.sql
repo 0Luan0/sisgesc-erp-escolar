@@ -56,7 +56,8 @@ CREATE TABLE status_mensalidade (
   status VARCHAR(20) NOT NULL,
   PRIMARY KEY (status)
 );
-INSERT INTO status_mensalidade (status) VALUES ('Pendente'), ('Pago'), ('Atrasado'), ('Cancelado');
+INSERT INTO status_mensalidade (status) VALUES ('Pendente'), ('Pago'), ('Atrasado'), ('Cancelado'), ('Parcial');
+-- Parcial: pagamento registrado mas valor ainda nao cobre o total da mensalidade
 
 CREATE TABLE status_pagamento (
   status VARCHAR(20) NOT NULL,
@@ -395,12 +396,31 @@ CREATE TABLE abono_ferias (
   fk_id_periodo    INT           NOT NULL,
   dias_vendidos    INT           NOT NULL,
   valor            DECIMAL(10,2) NOT NULL,
-  data_solicitacao DATE          NOT NULL DEFAULT (CURRENT_DATE),
+  data_solicitacao DATE          NOT NULL,
   PRIMARY KEY (fk_id_periodo),
   CONSTRAINT chk_abono_dias  CHECK (dias_vendidos >= 1 AND dias_vendidos <= 10),
   CONSTRAINT chk_abono_valor CHECK (valor > 0),
   CONSTRAINT fk_abono_periodo FOREIGN KEY (fk_id_periodo)
     REFERENCES periodo_aquisitivo(pk_id_periodo) ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+
+-- Relacionamento simetrico entre funcionarios casados ou em uniao estavel
+-- CHECK (fk_rgf_1 < fk_rgf_2) elimina o par invertido (A,B) != (B,A)
+-- RN: empresa permite conjuges mas proibe relacao hierarquica direta (verificar via aplicacao)
+CREATE TABLE conjuge_funcionario (
+  fk_rgf_1   CHAR(5)     NOT NULL,
+  fk_rgf_2   CHAR(5)     NOT NULL,
+  tipo_uniao VARCHAR(20) NOT NULL,
+  data_uniao DATE        NOT NULL,
+  PRIMARY KEY (fk_rgf_1, fk_rgf_2),
+  CONSTRAINT chk_conjuge_distintos CHECK (fk_rgf_1 != fk_rgf_2),
+  CONSTRAINT chk_conjuge_ordem     CHECK (fk_rgf_1 < fk_rgf_2),
+  CONSTRAINT chk_conjuge_tipo      CHECK (tipo_uniao IN ('Casamento', 'Uniao Estavel')),
+  CONSTRAINT fk_conjuge_func1 FOREIGN KEY (fk_rgf_1)
+    REFERENCES funcionario(rgf) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_conjuge_func2 FOREIGN KEY (fk_rgf_2)
+    REFERENCES funcionario(rgf) ON DELETE RESTRICT ON UPDATE RESTRICT
 );
 
 
@@ -563,6 +583,9 @@ CREATE TABLE matricula_turma (
     REFERENCES status_matricula_turma(status) ON DELETE RESTRICT ON UPDATE CASCADE
 );
 
+-- pk surrogate: (fk_id_turma, nome_atividade) seria chave natural candidata,
+-- mas o surrogate evita FK de 2 campos em nota e simplifica referenciar a avaliacao
+-- UNIQUE garante que o nome e de fato unico dentro de cada turma (chave candidata)
 CREATE TABLE avaliacao (
   pk_id_avaliacao INT          NOT NULL AUTO_INCREMENT,
   fk_id_turma     INT          NOT NULL,
@@ -570,6 +593,7 @@ CREATE TABLE avaliacao (
   peso            DECIMAL(4,2) NOT NULL,
   data_aplicacao  DATE,
   PRIMARY KEY (pk_id_avaliacao),
+  CONSTRAINT uq_aval_turma_nome UNIQUE (fk_id_turma, nome_atividade),
   CONSTRAINT chk_aval_peso CHECK (peso > 0),
   CONSTRAINT fk_aval_turma FOREIGN KEY (fk_id_turma)
     REFERENCES turma(pk_id_turma) ON DELETE CASCADE ON UPDATE CASCADE
@@ -583,7 +607,7 @@ CREATE TABLE nota (
   fk_id_matricula INT          NOT NULL,
   nota_atividade  DECIMAL(4,2) NOT NULL,
   PRIMARY KEY (fk_id_avaliacao, fk_id_matricula),
-  CONSTRAINT chk_nota_valor CHECK (nota_atividade >= 0),
+  CONSTRAINT chk_nota_valor CHECK (nota_atividade >= 0 AND nota_atividade <= 10),
   CONSTRAINT fk_nota_aval FOREIGN KEY (fk_id_avaliacao)
     REFERENCES avaliacao(pk_id_avaliacao) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT fk_nota_mat FOREIGN KEY (fk_id_matricula)
@@ -1169,6 +1193,52 @@ END$$
 DELIMITER ;
 
 
+-- Atualiza mensalidade.status automaticamente apos cada pagamento registrado
+-- 'Parcial': pagamento iniciado mas insuficiente para quitar o saldo devedor
+-- 'Pago'   : soma dos pagamentos confirmados >= valor_liquido da mensalidade
+-- Resolve o cenario de pagamento parcelado sem precisar de UPDATE manual na aplicacao
+--
+-- LIMITACAO MySQL (ERROR 1442): este trigger nao pode executar quando o INSERT em
+-- pagamento e feito via "INSERT ... SELECT FROM mensalidade", pois o MySQL proibe
+-- UPDATE na mesma tabela que a instrucao pai esta lendo na mesma execucao.
+-- Em uso normal da aplicacao (INSERT com VALUES explicitos, um pagamento por vez),
+-- o trigger funciona corretamente sem nenhuma restricao.
+-- Workaround para scripts ETL/bulk: ler de contrato+matricula para montar o INSERT
+-- em pagamento — nunca fazer SELECT FROM mensalidade como fonte do INSERT.
+DELIMITER $$
+CREATE TRIGGER TR_pagamento_quita_mensalidade_insert
+AFTER INSERT ON pagamento
+FOR EACH ROW
+BEGIN
+    DECLARE v_total_pago   DECIMAL(10,2);
+    DECLARE v_valor_liquido DECIMAL(10,2);
+
+    IF NEW.status = 'Pago' THEN
+        SELECT COALESCE(SUM(p.valor_pago), 0)
+        INTO v_total_pago
+        FROM pagamento p
+        WHERE p.fk_id_contrato = NEW.fk_id_contrato
+          AND p.periodo        = NEW.periodo
+          AND p.status         = 'Pago';
+
+        SELECT (ms.valor_base - ms.valor_desconto)
+        INTO v_valor_liquido
+        FROM mensalidade ms
+        WHERE ms.fk_id_contrato = NEW.fk_id_contrato
+          AND ms.periodo        = NEW.periodo;
+
+        IF v_total_pago >= v_valor_liquido THEN
+            UPDATE mensalidade SET status = 'Pago'
+            WHERE fk_id_contrato = NEW.fk_id_contrato AND periodo = NEW.periodo;
+        ELSEIF v_total_pago > 0 THEN
+            UPDATE mensalidade SET status = 'Parcial'
+            WHERE fk_id_contrato = NEW.fk_id_contrato AND periodo = NEW.periodo;
+        END IF;
+    END IF;
+END$$
+DELIMITER ;
+
+
 -- ============================================================
 -- VIEWS — campos derivados (calculados, nao armazenados)
 -- ============================================================
@@ -1193,7 +1263,7 @@ CREATE VIEW vw_nota_final AS
 SELECT
   n.fk_id_matricula,
   a.fk_id_turma,
-  SUM(n.nota_atividade * a.peso) / SUM(a.peso) AS nota_final
+  SUM(n.nota_atividade * a.peso) / NULLIF(SUM(a.peso), 0) AS nota_final
 FROM nota n
 JOIN avaliacao a ON a.pk_id_avaliacao = n.fk_id_avaliacao
 GROUP BY n.fk_id_matricula, a.fk_id_turma;
@@ -1206,3 +1276,41 @@ SELECT
   valor_desconto,
   (valor_base - valor_desconto) AS valor_final
 FROM mensalidade;
+
+-- Resumo de inadimplencia por aluno: meses em aberto e total devedor
+-- valor_em_aberto = valor_liquido das mensalidades Pendente/Atrasado sem pagamento integral
+CREATE VIEW vw_inadimplencia AS
+SELECT
+  CONCAT(a.nome, ' ', a.sobrenome)         AS aluno,
+  c.nome_curso,
+  COUNT(ms.periodo)                        AS meses_em_aberto,
+  SUM(ms.valor_base - ms.valor_desconto)   AS total_em_aberto,
+  MIN(ms.data_vencimento)                  AS vencimento_mais_antigo
+FROM mensalidade ms
+JOIN contrato  ct ON ct.pk_id_contrato  = ms.fk_id_contrato
+JOIN matricula m  ON m.pk_id_matricula  = ct.fk_id_matricula
+JOIN aluno     a  ON a.rga              = m.fk_rga
+JOIN curso     c  ON c.codigo_curso     = m.fk_curso
+WHERE ms.status IN ('Pendente', 'Atrasado')
+GROUP BY a.rga, c.codigo_curso
+ORDER BY total_em_aberto DESC;
+
+-- Identifica funcionarios que tambem sao alunos da instituicao
+-- Link via CPF (unico em ambas as tabelas)
+-- Util para gestao de beneficios (desconto de funcionario) e conflitos de interesse
+CREATE VIEW vw_funcionario_aluno AS
+SELECT
+  f.rgf,
+  a.rga,
+  CONCAT(f.nome, ' ', f.sobrenome) AS nome_completo,
+  cg.nome_cargo,
+  cg.nome_departamento,
+  c.nome_curso,
+  m.ano_ingresso,
+  m.status AS status_matricula
+FROM funcionario f
+JOIN aluno     a  ON a.cpf           = f.cpf
+JOIN matricula m  ON m.fk_rga        = a.rga AND m.status = 'Cursando'
+JOIN cargo     cg ON cg.codigo_cargo = f.codigo_cargo
+JOIN curso     c  ON c.codigo_curso  = m.fk_curso
+WHERE f.status IN ('Ativo', 'Afastado');

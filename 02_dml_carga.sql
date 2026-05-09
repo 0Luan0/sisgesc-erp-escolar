@@ -5,8 +5,36 @@
 -- Observacao: MySQL suprime SIGNAL de trigger com INSERT IGNORE
 -- (erro convertido em warning, linha descartada silenciosamente)
 -- ============================================================
+-- PROVA DE IDEMPOTENCIA:
+--   Execute este script duas vezes seguidas (sem reset entre elas).
+--   Na 1a execucao: coluna ANTES sera 0 em todas as tabelas operacionais.
+--   Na 2a execucao: coluna ANTES tera os mesmos valores da coluna DEPOIS
+--   da execucao anterior — provando que nenhum dado foi duplicado.
+-- ============================================================
 
 USE erp_escolar;
+
+-- ============================================================
+-- CONTAGEM ANTES DA CARGA
+-- (na 2a execucao, estes numeros devem ser identicos aos da secao DEPOIS)
+-- ============================================================
+SELECT 'ANTES' AS fase,
+  (SELECT COUNT(*) FROM departamento)            AS departamento,
+  (SELECT COUNT(*) FROM cargo)                   AS cargo,
+  (SELECT COUNT(*) FROM funcionario)             AS funcionario,
+  (SELECT COUNT(*) FROM professor)               AS professor,
+  (SELECT COUNT(*) FROM aluno)                   AS aluno,
+  (SELECT COUNT(*) FROM matricula)               AS matricula,
+  (SELECT COUNT(*) FROM curso)                   AS curso,
+  (SELECT COUNT(*) FROM turma)                   AS turma,
+  (SELECT COUNT(*) FROM contrato)                AS contrato,
+  (SELECT COUNT(*) FROM mensalidade)             AS mensalidade,
+  (SELECT COUNT(*) FROM pagamento)               AS pagamento,
+  (SELECT COUNT(*) FROM folha_pagamentos)        AS folha_pagamentos,
+  (SELECT COUNT(*) FROM folha_evento)            AS folha_evento,
+  (SELECT COUNT(*) FROM ferias)                  AS ferias,
+  (SELECT COUNT(*) FROM ponto)                   AS ponto,
+  (SELECT COUNT(*) FROM conjuge_funcionario)     AS conjuge_funcionario;
 
 -- ============================================================
 -- MODULO RH — Departamentos e Cargos
@@ -108,10 +136,13 @@ VALUES
   (4, 'F0006', '2019-08-20', '2020-08-19', 30);
 
 -- TR_ferias_dentro_periodo: datas dentro do periodo aquisitivo
+-- f1: F0001 periodo 2 (2021-01-10 a 2022-01-09) — julho/2021 ok
+-- f2: F0003 periodo 3 (2018-06-15 a 2019-06-14) — janeiro/2019 ok
+-- f3: F0006 periodo 4 (2019-08-20 a 2020-08-19) — janeiro/2020 ok
 INSERT IGNORE INTO ferias (pk_id_ferias, fk_id_periodo, data_inicio, data_fim, status) VALUES
-  (1, 1, '2021-07-05', '2021-07-25', 'Concluida'),
-  (2, 3, '2019-12-02', '2019-12-22', 'Concluida'),
-  (3, 4, '2021-01-04', '2021-01-24', 'Concluida');
+  (1, 2, '2021-07-05', '2021-07-25', 'Concluida'),
+  (2, 3, '2019-01-07', '2019-01-27', 'Concluida'),
+  (3, 4, '2020-01-06', '2020-01-26', 'Concluida');
 
 -- registros de ponto: ordem cronologica por funcionario (trigger de alternancia)
 -- padrao simples: Entrada → Saida por dia
@@ -560,9 +591,51 @@ VALUES
   (39, 8, '2024-05', 'Pix',           '2024-05-08',  950.00, 'Pago', 'PIX-2024-0508'),
   (40, 8, '2024-06', 'Pix',           '2024-06-08',  950.00, 'Pago', 'PIX-2024-0608');
 
+-- pagamento parcelado: contrato 2, julho/2024 (Atrasado -> quitado em 2 parcelas)
+-- demonstra que o sistema aceita multiplos registros de pagamento para um mesmo periodo
+-- caso real: aluno pagou 500 no dia 05/08 e 450 no dia 20/08 para quitar a mensalidade
+INSERT IGNORE INTO pagamento
+  (pk_id_pagamento, fk_id_contrato, periodo, metodo, data_pagamento, valor_pago, status, id_transacao_externo)
+VALUES
+  (41, 2, '2024-07', 'Pix', '2024-08-05', 500.00, 'Pago', 'PIX-2024-0807A'),
+  (42, 2, '2024-07', 'Pix', '2024-08-20', 450.00, 'Pago', 'PIX-2024-0807B');
+
+-- TR_pagamento_quita_mensalidade_insert atualiza mensalidade.status automaticamente
+-- apos cada INSERT: 500 -> 'Parcial', 950 (500+450) -> 'Pago'
+-- nao e necessario UPDATE manual aqui
+
+
+-- conjuges na empresa (RN: empresa permite — registrar para gestao de beneficios)
+INSERT IGNORE INTO conjuge_funcionario (fk_rgf_1, fk_rgf_2, tipo_uniao, data_uniao) VALUES
+  ('F0003', 'F0004', 'Casamento',    '2015-09-12'),
+  ('F0005', 'F0006', 'Uniao Estavel','2020-03-01');
+
 
 -- ============================================================
--- EVIDENCIA DE CARGA — rodar antes e depois para comparar
+-- CONTAGEM DEPOIS DA CARGA
+-- Idempotencia confirmada quando ANTES (2a execucao) = DEPOIS (1a execucao)
+-- ============================================================
+
+SELECT 'DEPOIS' AS fase,
+  (SELECT COUNT(*) FROM departamento)            AS departamento,
+  (SELECT COUNT(*) FROM cargo)                   AS cargo,
+  (SELECT COUNT(*) FROM funcionario)             AS funcionario,
+  (SELECT COUNT(*) FROM professor)               AS professor,
+  (SELECT COUNT(*) FROM aluno)                   AS aluno,
+  (SELECT COUNT(*) FROM matricula)               AS matricula,
+  (SELECT COUNT(*) FROM curso)                   AS curso,
+  (SELECT COUNT(*) FROM turma)                   AS turma,
+  (SELECT COUNT(*) FROM contrato)                AS contrato,
+  (SELECT COUNT(*) FROM mensalidade)             AS mensalidade,
+  (SELECT COUNT(*) FROM pagamento)               AS pagamento,
+  (SELECT COUNT(*) FROM folha_pagamentos)        AS folha_pagamentos,
+  (SELECT COUNT(*) FROM folha_evento)            AS folha_evento,
+  (SELECT COUNT(*) FROM ferias)                  AS ferias,
+  (SELECT COUNT(*) FROM ponto)                   AS ponto,
+  (SELECT COUNT(*) FROM conjuge_funcionario)     AS conjuge_funcionario;
+
+-- ============================================================
+-- DETALHAMENTO COMPLETO — todas as 33 tabelas operacionais
 -- ============================================================
 
 SELECT 'departamento'            AS tabela, COUNT(*) AS registros FROM departamento
@@ -596,4 +669,5 @@ UNION ALL SELECT 'contrato',                COUNT(*) FROM contrato
 UNION ALL SELECT 'bolsa',                   COUNT(*) FROM bolsa
 UNION ALL SELECT 'mensalidade',             COUNT(*) FROM mensalidade
 UNION ALL SELECT 'atraso_mensalidade',      COUNT(*) FROM atraso_mensalidade
-UNION ALL SELECT 'pagamento',               COUNT(*) FROM pagamento;
+UNION ALL SELECT 'pagamento',               COUNT(*) FROM pagamento
+UNION ALL SELECT 'conjuge_funcionario',     COUNT(*) FROM conjuge_funcionario;

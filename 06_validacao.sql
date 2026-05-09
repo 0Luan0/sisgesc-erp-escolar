@@ -19,14 +19,17 @@ SELECT
     olap.total_registros            AS registros_olap
 FROM (
     SELECT
-        COUNT(*)                AS total_registros,
+        COUNT(*)                       AS total_registros,
         SUM(COALESCE(p.valor_pago, 0)) AS soma_oltp
     FROM erp_escolar.mensalidade ms
     JOIN erp_escolar.contrato ct ON ct.pk_id_contrato = ms.fk_id_contrato
-    LEFT JOIN erp_escolar.pagamento p
-        ON p.fk_id_contrato = ms.fk_id_contrato
+    LEFT JOIN (
+        SELECT fk_id_contrato, periodo, SUM(valor_pago) AS valor_pago
+        FROM erp_escolar.pagamento
+        WHERE status = 'Pago'
+        GROUP BY fk_id_contrato, periodo
+    ) p ON p.fk_id_contrato = ms.fk_id_contrato
        AND p.periodo = ms.periodo
-       AND p.status = 'Pago'
 ) oltp
 JOIN (
     SELECT
@@ -47,10 +50,13 @@ FROM (
         SUM(COALESCE(p.valor_pago, 0)) AS soma_oltp
     FROM erp_escolar.mensalidade ms
     JOIN erp_escolar.contrato ct ON ct.pk_id_contrato = ms.fk_id_contrato
-    LEFT JOIN erp_escolar.pagamento p
-        ON p.fk_id_contrato = ms.fk_id_contrato
+    LEFT JOIN (
+        SELECT fk_id_contrato, periodo, SUM(valor_pago) AS valor_pago
+        FROM erp_escolar.pagamento
+        WHERE status = 'Pago'
+        GROUP BY fk_id_contrato, periodo
+    ) p ON p.fk_id_contrato = ms.fk_id_contrato
        AND p.periodo = ms.periodo
-       AND p.status = 'Pago'
     GROUP BY ms.periodo
 ) oltp
 JOIN (
@@ -77,10 +83,13 @@ FROM (
     FROM erp_escolar.mensalidade ms
     JOIN erp_escolar.contrato  ct ON ct.pk_id_contrato  = ms.fk_id_contrato
     JOIN erp_escolar.matricula m  ON m.pk_id_matricula  = ct.fk_id_matricula
-    LEFT JOIN erp_escolar.pagamento p
-        ON p.fk_id_contrato = ms.fk_id_contrato
+    LEFT JOIN (
+        SELECT fk_id_contrato, periodo, SUM(valor_pago) AS valor_pago
+        FROM erp_escolar.pagamento
+        WHERE status = 'Pago'
+        GROUP BY fk_id_contrato, periodo
+    ) p ON p.fk_id_contrato = ms.fk_id_contrato
        AND p.periodo = ms.periodo
-       AND p.status = 'Pago'
     GROUP BY m.fk_curso
 ) oltp
 JOIN (
@@ -132,38 +141,38 @@ LEFT JOIN pagamento p ON p.fk_id_contrato = ms.fk_id_contrato
 
 -- OLTP — Modulo Financeiro
 -- mensalidade.status: filtro de inadimplencia (Q04) e ETL (Fase 5)
-CREATE INDEX IF NOT EXISTS idx_mensalidade_status
+CREATE INDEX idx_mensalidade_status
     ON mensalidade (status);
 
 -- pagamento(fk_id_contrato, periodo, status): join critico do ETL
 -- composto porque as tres colunas aparecem juntas no ON do LEFT JOIN
-CREATE INDEX IF NOT EXISTS idx_pagamento_contrato_periodo
+CREATE INDEX idx_pagamento_contrato_periodo
     ON pagamento (fk_id_contrato, periodo, status);
 
 -- OLTP — Modulo RH
 -- historico_salario(fk_rgf, data_fim): salario vigente (Q02, Q08)
 -- data_fim IS NULL e o filtro mais seletivo; composto cobre o JOIN por fk_rgf
-CREATE INDEX IF NOT EXISTS idx_historico_salario_vigente
+CREATE INDEX idx_historico_salario_vigente
     ON historico_salario (fk_rgf, data_fim);
 
 -- OLTP — Modulo Academico
 -- matricula(fk_curso, status): contagem por curso (Q07) e join do ETL
-CREATE INDEX IF NOT EXISTS idx_matricula_curso_status
+CREATE INDEX idx_matricula_curso_status
     ON matricula (fk_curso, status);
 
 -- frequencia(fk_id_matricula, fk_id_turma): GROUP BY de frequencia (Q09)
-CREATE INDEX IF NOT EXISTS idx_frequencia_matricula_turma
+CREATE INDEX idx_frequencia_matricula_turma
     ON frequencia (fk_id_matricula, fk_id_turma);
 
 -- OLAP — Fato
 -- queries analiticas filtram e agrupam por tempo e curso com frequencia
-CREATE INDEX IF NOT EXISTS idx_ft_tempo
+CREATE INDEX idx_ft_tempo
     ON erp_escolar_olap.ft_receita_mensalidade (fk_id_tempo);
 
-CREATE INDEX IF NOT EXISTS idx_ft_curso_tempo
+CREATE INDEX idx_ft_curso_tempo
     ON erp_escolar_olap.ft_receita_mensalidade (fk_id_curso, fk_id_tempo);
 
-CREATE INDEX IF NOT EXISTS idx_ft_status
+CREATE INDEX idx_ft_status
     ON erp_escolar_olap.ft_receita_mensalidade (status_mensalidade);
 
 -- ============================================================

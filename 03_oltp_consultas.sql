@@ -71,6 +71,25 @@ JOIN curso       c  ON c.codigo_curso    = m.fk_curso
 WHERE ms.status IN ('Pendente', 'Atrasado')
 ORDER BY ms.status DESC, ms.data_vencimento;
 
+-- Q05-RH: Pares de conjuges na empresa com seus respectivos departamentos
+-- RN: empresa permite conjuges, mas relacao hierarquica direta deve ser monitorada
+SELECT
+    CONCAT(f1.nome, ' ', f1.sobrenome) AS conjuge_1,
+    cg1.nome_cargo                     AS cargo_1,
+    cg1.nome_departamento              AS depto_1,
+    cf.tipo_uniao,
+    CONCAT(f2.nome, ' ', f2.sobrenome) AS conjuge_2,
+    cg2.nome_cargo                     AS cargo_2,
+    cg2.nome_departamento              AS depto_2,
+    CASE WHEN cg1.nome_departamento = cg2.nome_departamento
+         THEN 'ALERTA: mesmo depto' ELSE 'OK' END AS situacao
+FROM conjuge_funcionario cf
+JOIN funcionario f1  ON f1.rgf          = cf.fk_rgf_1
+JOIN funcionario f2  ON f2.rgf          = cf.fk_rgf_2
+JOIN cargo       cg1 ON cg1.codigo_cargo = f1.codigo_cargo
+JOIN cargo       cg2 ON cg2.codigo_cargo = f2.codigo_cargo
+ORDER BY cf.data_uniao;
+
 -- ============================================================
 -- BLOCO 2: Subselects com agregacao
 -- ============================================================
@@ -197,6 +216,40 @@ GROUP BY t.fk_rgf
 HAVING qtd_materias > 1
 ORDER BY qtd_materias DESC;
 
+-- Q13: Anomalia academica — frequencia abaixo do minimo legal com nota acima da media da turma
+-- Levanta casos que merecem investigacao: compensacao por desempenho? inconsistencia de registro?
+-- util para o coordenador identificar alunos que podem precisar de atestado medico retroativo
+SELECT
+    CONCAT(a.nome, ' ', a.sobrenome) AS aluno,
+    mat.nome_materia,
+    ROUND(freq.pct_frequencia, 1)    AS frequencia_pct,
+    ROUND(nf.nota_final, 2)          AS nota_individual,
+    ROUND(media_t.media_turma, 2)    AS media_turma,
+    ROUND(nf.nota_final - media_t.media_turma, 2) AS desvio_acima_da_media
+FROM vw_nota_final nf
+JOIN (
+    SELECT
+        fk_id_matricula,
+        fk_id_turma,
+        ROUND(SUM(presente) / COUNT(*) * 100, 1) AS pct_frequencia
+    FROM frequencia
+    GROUP BY fk_id_matricula, fk_id_turma
+) freq ON freq.fk_id_matricula = nf.fk_id_matricula
+       AND freq.fk_id_turma    = nf.fk_id_turma
+JOIN (
+    SELECT fk_id_turma, AVG(nota_final) AS media_turma
+    FROM vw_nota_final
+    GROUP BY fk_id_turma
+) media_t ON media_t.fk_id_turma = nf.fk_id_turma
+JOIN matricula m   ON m.pk_id_matricula = nf.fk_id_matricula
+JOIN aluno     a   ON a.rga             = m.fk_rga
+JOIN turma     t   ON t.pk_id_turma     = nf.fk_id_turma
+JOIN materia   mat ON mat.codigo_materia = t.fk_materia
+WHERE freq.pct_frequencia < 75
+  AND nf.nota_final > media_t.media_turma
+ORDER BY desvio_acima_da_media DESC;
+-- SUM(presente) funciona porque presente e BOOLEAN (TRUE=1, FALSE=0) no MySQL
+
 -- Q12: Consistencia financeira — soma de pagamentos bate com mensalidades Pagas por contrato
 -- verifica se o total pago = SUM(valor_base - valor_desconto) das mensalidades quitadas
 SELECT
@@ -236,6 +289,7 @@ ORDER BY diferenca DESC;
 -- ----------------------------------------------------------
 -- Cenario 1: ROLLBACK — desfazendo uma operacao com erro
 -- Simula tentativa de cadastro que precisa ser desfeita
+-- RGA A0000009 nao existe no DML (dados vao de A0000001 a A0000008)
 -- ----------------------------------------------------------
 
 SELECT COUNT(*) AS total_alunos_antes FROM aluno;
@@ -243,16 +297,16 @@ SELECT COUNT(*) AS total_alunos_antes FROM aluno;
 START TRANSACTION;
 
 INSERT INTO aluno (rga, cpf, nome, sobrenome, data_nascimento, status)
-VALUES ('A0000001', '99999999901', 'Aluno', 'Rollback', '2000-01-01', 'Ativo');
+VALUES ('A0000009', '99999999901', 'Aluno', 'Rollback', '2000-01-01', 'Ativo');
 
--- erro detectado antes do commit (ex: CPF invalido na validacao da aplicacao)
+-- erro detectado antes do commit (ex: documentacao pendente)
 ROLLBACK;
 
 -- validacao: registro NAO deve existir apos ROLLBACK
 SELECT COUNT(*) AS total_alunos_apos_rollback FROM aluno;
 -- resultado esperado: mesmo valor do total_alunos_antes
 
-SELECT rga FROM aluno WHERE rga = 'A0000001';
+SELECT rga FROM aluno WHERE rga = 'A0000009';
 -- resultado esperado: 0 linhas — atomicidade garantida
 
 -- ----------------------------------------------------------
@@ -263,18 +317,18 @@ SELECT rga FROM aluno WHERE rga = 'A0000001';
 START TRANSACTION;
 
 INSERT INTO aluno (rga, cpf, nome, sobrenome, data_nascimento, status)
-VALUES ('A0000001', '99999999901', 'Aluno', 'Commit', '2000-01-01', 'Ativo');
+VALUES ('A0000009', '99999999901', 'Aluno', 'Commit', '2000-01-01', 'Ativo');
 
 COMMIT;
 
 -- validacao: registro DEVE existir apos COMMIT
 SELECT rga, nome, sobrenome, status
 FROM aluno
-WHERE rga = 'A0000001';
+WHERE rga = 'A0000009';
 -- resultado esperado: 1 linha — durabilidade confirmada
 
 -- limpeza do registro de teste
-DELETE FROM aluno WHERE rga = 'A0000001';
+DELETE FROM aluno WHERE rga = 'A0000009';
 
 -- ----------------------------------------------------------
 -- Cenario 3 (diferencial): Transacao com multiplas operacoes

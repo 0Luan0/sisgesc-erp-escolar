@@ -120,10 +120,15 @@ JOIN erp_escolar_olap.dim_unidade du ON du.nome_unidade = CASE m.fk_curso
     WHEN 'LOG' THEN 'Gestao e Negocios'
     END
 
--- pagamento efetivo (LEFT JOIN: mensalidades nao pagas ficam com valor_pago = 0)
-LEFT JOIN erp_escolar.pagamento p ON p.fk_id_contrato = ms.fk_id_contrato
-                                 AND p.periodo        = ms.periodo
-                                 AND p.status         = 'Pago'
+-- pagamento efetivo: LEFT JOIN com subquery agregada para suportar pagamentos parcelados
+-- sem o GROUP BY, multiplos pagamentos no mesmo periodo geram linhas duplicadas na fato
+LEFT JOIN (
+    SELECT fk_id_contrato, periodo, SUM(valor_pago) AS valor_pago
+    FROM erp_escolar.pagamento
+    WHERE status = 'Pago'
+    GROUP BY fk_id_contrato, periodo
+) p ON p.fk_id_contrato = ms.fk_id_contrato
+   AND p.periodo        = ms.periodo
 ORDER BY ms.periodo, a.rga;
 
 -- ============================================================
@@ -143,12 +148,16 @@ UNION ALL SELECT 'ft_receita_mensalidade',COUNT(*) FROM ft_receita_mensalidade;
 SELECT
     'OLTP' AS origem,
     COUNT(*)        AS total_registros,
-    SUM(CASE WHEN p.status = 'Pago' THEN p.valor_pago ELSE 0 END) AS soma_valor_pago
+    SUM(COALESCE(p.valor_pago, 0)) AS soma_valor_pago
 FROM erp_escolar.mensalidade ms
 JOIN erp_escolar.contrato  ct ON ct.pk_id_contrato = ms.fk_id_contrato
-LEFT JOIN erp_escolar.pagamento p ON p.fk_id_contrato = ms.fk_id_contrato
-                                 AND p.periodo = ms.periodo
-                                 AND p.status = 'Pago'
+LEFT JOIN (
+    SELECT fk_id_contrato, periodo, SUM(valor_pago) AS valor_pago
+    FROM erp_escolar.pagamento
+    WHERE status = 'Pago'
+    GROUP BY fk_id_contrato, periodo
+) p ON p.fk_id_contrato = ms.fk_id_contrato
+   AND p.periodo        = ms.periodo
 
 UNION ALL
 

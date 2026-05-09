@@ -5,88 +5,156 @@ Desenvolvido como projeto de banco de dados relacional em MySQL 8+.
 
 ---
 
-## Pré-requisitos
+## Execução — passo a passo (MySQL Workbench)
 
-- MySQL 8.0+
-- Usuário com `CREATE DATABASE`, `CREATE TABLE`, `TRIGGER`, `EVENT` privileges
-- Cliente MySQL (Workbench, DBeaver, ou CLI)
+> Recomendado para avaliação. Funciona igual em Windows e macOS.
+
+1. Abra o **MySQL Workbench** e conecte-se ao servidor local
+2. No menu superior: **File → Run SQL Script...**
+3. Selecione o arquivo **`run_all.sql`** (disponível na raiz do repositório)
+4. Na caixa "Default Schema" que aparecer: deixe em **branco** e clique em **Run**
+5. Aguarde a execução completa (alguns segundos)
+6. Verifique o resultado esperado abaixo
+
+> **Importante:** use sempre "Run SQL Script" (menu File), não o botão de raio (Execute). O "Run SQL Script" processa corretamente as mudanças de DELIMITER necessárias para os triggers.
 
 ---
 
-## Como executar
+## Execução — linha de comando
 
-### Opção 1 — script único (recomendado)
+### Windows (CMD)
+
+```cmd
+cd C:\caminho\ate\a\pasta\do\projeto
+"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p < run_all.sql
+```
+
+### macOS / Linux
 
 ```bash
+cp run_all.sql /tmp/run_all.sql
+/usr/local/mysql/bin/mysql -u root -p
+```
+Dentro do MySQL:
+```sql
+SOURCE /tmp/run_all.sql
+```
+
+> O arquivo `run_all.sql` e autocontido — nao usa SOURCE internamente. Funciona com qualquer cliente MySQL.
+
+---
+
+## Resultado esperado apos execucao
+
+### Banco OLTP — `erp_escolar` (33 tabelas)
+
+| tabela | registros |
+|---|---|
+| funcionario | 6 |
+| professor | 2 |
+| aluno | 8 |
+| matricula | 8 |
+| curso | 3 |
+| materia | 6 |
+| turma | 6 |
+| contrato | 8 |
+| mensalidade | 48 |
+| pagamento | 42 |
+| folha_pagamentos | 18 |
+| folha_evento | 78 |
+| ferias | 3 |
+| conjuge_funcionario | 2 |
+
+### Banco OLAP — `erp_escolar_olap` (star schema)
+
+| tabela | registros |
+|---|---|
+| dim_tempo | 6 |
+| dim_aluno | 8 |
+| dim_curso | 3 |
+| dim_unidade | 3 |
+| ft_receita_mensalidade | 48 |
+
+### Validacao financeira (OLTP = OLAP)
+
+```
+soma_oltp   soma_olap   diferenca
+36387.50    36387.50    0.00
+```
+
+Qualquer `diferenca != 0.00` indica erro no ETL.
+
+---
+
+## Resetar e executar do zero
+
+Para repetir a execucao em um banco ja populado:
+
+**Workbench:** File -> Run SQL Script -> selecione `07_reset.sql` -> Run.
+Em seguida repita com `run_all.sql`.
+
+**Linha de comando:**
+```cmd
+mysql -u root -p < 07_reset.sql
 mysql -u root -p < run_all.sql
 ```
 
-Executa todas as fases em ordem: DDL → carga → consultas OLTP → OLAP → ETL → validação.
-
-### Opção 2 — fase a fase
-
-Útil para acompanhar a saída de cada etapa separadamente.
-
-```bash
-mysql -u root -p < 01_ddl_estrutura.sql   # cria banco e tabelas
-mysql -u root -p < 02_dml_carga.sql       # carga inicial
-mysql -u root -p < 03_oltp_consultas.sql  # consultas OLTP
-mysql -u root -p < 04_olap_star_schema.sql # estrutura OLAP
-mysql -u root -p < 05_etl_carga_olap.sql  # ETL + validação cruzada
-mysql -u root -p < 06_validacao.sql       # índices + EXPLAIN + consistência
-```
-
-### Resetar tudo
-
-```bash
-mysql -u root -p < 07_reset.sql
-```
-
-Remove todas as tabelas do `erp_escolar` e dropa o banco `erp_escolar_olap`. Após o reset, basta rodar `run_all.sql` novamente.
+O reset elimina os bancos `erp_escolar` e `erp_escolar_olap` completamente antes de recriar.
 
 ---
 
-## Estrutura do repositório
+## Estrutura do repositorio
 
 ```
 /
-├── run_all.sql              # ponto de entrada único
-├── 01_ddl_estrutura.sql     # DDL completo: tabelas, views, triggers
-├── 02_dml_carga.sql         # carga idempotente (INSERT IGNORE)
-├── 03_oltp_consultas.sql    # 12 consultas OLTP em 3 níveis
+├── run_all.sql              <- ponto de entrada unico (use este)
+├── 01_ddl_estrutura.sql     # DDL completo: 33 tabelas, views, 14 triggers
+├── 02_dml_carga.sql         # carga de dados idempotente (INSERT IGNORE)
+├── 03_oltp_consultas.sql    # 12 consultas OLTP + demonstracao ACID
 ├── 04_olap_star_schema.sql  # star schema (banco erp_escolar_olap)
-├── 05_etl_carga_olap.sql    # ETL full reload OLTP → OLAP
-├── 06_validacao.sql         # índices, EXPLAIN antes/depois, SUM OLTP = OLAP
-├── 07_reset.sql             # DROP/TRUNCATE para execução limpa
+├── 05_etl_carga_olap.sql    # ETL full reload OLTP -> OLAP
+├── 06_validacao.sql         # indices, EXPLAIN antes/depois, SUM OLTP = OLAP
+├── 07_reset.sql             # DROP DATABASE para reinicio limpo
 └── docs/
-    └── dicionario_dados.md  # dicionário completo de todas as tabelas
+    ├── dicionario_dados.md  # dicionario de dados completo (todas as 33 tabelas)
+    └── der_oltp_olap.png    # DER com modelagem OLTP + Star Schema OLAP
 ```
 
 ---
 
-## Módulos e principais entidades
+## Documentacao tecnica
 
-**RH:** `funcionario` → `professor` (papel, PK herdada), `cargo`, `folha_pagamentos`, `folha_evento`, `historico_salario`, `ferias`
-
-**Acadêmico:** `curso` → `materia` (grade em `curso_materia`), `calendario_academico`, `aluno` → `matricula` → `turma` → `nota` / `frequencia`
-
-**Financeiro:** `matricula` → `contrato` → `mensalidade` → `pagamento`. Toda cobrança nasce no contrato.
+- **[Dicionario de Dados](docs/dicionario_dados.md)** — todas as 33 tabelas, tipos, restricoes e proposito de cada coluna
+- **[DER OLTP + OLAP](docs/der_oltp_olap.png)** — diagrama entidade-relacionamento refletindo exatamente o schema atual, incluindo o Star Schema
 
 ---
 
-## Decisões de arquitetura relevantes
+## Modulos e principais entidades
 
-- **Pix/Boleto** não têm tabela própria. A operação financeira é delegada a uma API externa; o banco registra apenas `id_transacao_externo` em `pagamento`. Evita duplicar regras de negócio de meios de pagamento dentro do banco.
-- **Campos derivados** (`nota_final`, `salario_liquido`, `valor_final`) nunca são armazenados. Existem como `VIEW` para consulta.
-- **Holerite** é relatório gerado pela aplicação — não é tabela.
-- **dim_unidade** no OLAP não existe no OLTP. É criada no ETL via mapeamento `curso → área acadêmica`, permitindo análise por grande área sem expor a granularidade do curso.
-- **Calendário acadêmico** com `fk_curso NULL` representa o calendário institucional (vale para todos os cursos). PK surrogate porque nullable impede PK composta.
+**RH:** `funcionario` -> `professor` (papel, PK herdada), `cargo`, `folha_pagamentos`, `folha_evento`, `historico_salario`, `ferias`, `periodo_aquisitivo`, `ponto`, `dependente`, `conjuge_funcionario`
+
+**Academico:** `curso` -> `materia` (grade em `curso_materia`), `calendario_academico`, `aluno` -> `matricula` -> `turma` -> `nota` / `frequencia`
+
+**Financeiro:** `matricula` -> `contrato` -> `mensalidade` -> `pagamento`. Toda cobranca nasce no contrato.
+
+---
+
+## Decisoes de arquitetura
+
+| Decisao | Justificativa |
+|---|---|
+| Pix/Boleto sem tabela propria | Operacao delegada a API externa; banco guarda apenas `id_transacao_externo` |
+| Campos derivados nunca armazenados | `nota_final`, `salario_liquido` existem como VIEW — criterio 3FN |
+| Holerite nao e tabela | Relatorio gerado sob demanda pela aplicacao |
+| `dim_unidade` criada no ETL | Nao existe no OLTP; mapeada via curso -> area academica no ETL |
+| Calendario com `fk_curso NULL` | NULL = institucional (vale para todos); PK surrogate porque nullable impede PK composta |
+| `professor` com PK herdada | Professor e papel de funcionario — cardinalidade 1:1, sem identidade propria |
 
 ---
 
 ## Bancos criados
 
-| Banco | Propósito |
+| Banco | Proposito |
 |---|---|
-| `erp_escolar` | OLTP — operações do dia a dia |
-| `erp_escolar_olap` | OLAP — star schema para análise |
+| `erp_escolar` | OLTP — operacoes transacionais do dia a dia |
+| `erp_escolar_olap` | OLAP — star schema para analise gerencial |
