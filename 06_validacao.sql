@@ -234,3 +234,49 @@ JOIN turma       t ON t.pk_id_turma      = mt.fk_id_turma
 JOIN matricula   m ON m.pk_id_matricula  = mt.fk_id_matricula
 WHERE m.fk_curso != t.fk_curso;
 -- resultado esperado: 0 linhas
+
+-- ============================================================
+-- PARTE 6: CONSULTAS ANALITICAS OLAP
+-- Demonstra o valor do star schema: perguntas de negocio
+-- que seriam custosas no OLTP, aqui sao diretas e rapidas
+-- ============================================================
+
+USE erp_escolar_olap;
+
+-- 6A: Faturamento mensal — receita esperada vs realizada
+-- Responde: em qual mes cobramos mais? Em qual pagamos mais?
+SELECT
+    dt.nome_mes,
+    dt.ano,
+    COUNT(*)                                             AS mensalidades,
+    SUM(ft.valor_liquido)                                AS receita_esperada,
+    SUM(ft.valor_pago)                                   AS receita_realizada,
+    ROUND(SUM(ft.valor_pago) / SUM(ft.valor_liquido) * 100, 1) AS taxa_pagamento_pct
+FROM ft_receita_mensalidade ft
+JOIN dim_tempo              dt ON dt.pk_id_tempo = ft.fk_id_tempo
+GROUP BY dt.pk_id_tempo, dt.nome_mes, dt.ano
+ORDER BY dt.pk_id_tempo;
+
+-- 6B: Faturamento por unidade academica
+-- Responde: qual area gera mais receita?
+SELECT
+    du.nome_unidade,
+    COUNT(DISTINCT ft.fk_id_aluno)  AS alunos,
+    SUM(ft.valor_liquido)           AS receita_esperada,
+    SUM(ft.valor_pago)              AS receita_realizada
+FROM ft_receita_mensalidade ft
+JOIN dim_unidade             du ON du.pk_id_unidade = ft.fk_id_unidade
+GROUP BY du.pk_id_unidade, du.nome_unidade
+ORDER BY receita_realizada DESC;
+
+-- 6C: Alunos com bolsa vs sem bolsa — impacto na receita
+-- Responde: qual o custo financeiro das bolsas concedidas?
+SELECT
+    CASE tem_bolsa WHEN 1 THEN 'Com bolsa' ELSE 'Sem bolsa' END AS perfil,
+    COUNT(DISTINCT fk_id_aluno) AS alunos,
+    SUM(valor_liquido)          AS receita_liquida,
+    SUM(valor_desconto)         AS total_descontos,
+    SUM(valor_pago)             AS receita_realizada
+FROM ft_receita_mensalidade
+GROUP BY tem_bolsa
+ORDER BY tem_bolsa DESC;

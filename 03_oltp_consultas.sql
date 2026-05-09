@@ -223,3 +223,78 @@ JOIN aluno       a  ON a.rga              = m.fk_rga
 WHERE ms.status = 'Pago'
 GROUP BY ct.pk_id_contrato
 ORDER BY diferenca DESC;
+
+-- ============================================================
+-- BLOCO 4: Controle Transacional (ACID)
+-- Principio ACID:
+--   Atomicidade  — ou executa tudo, ou nao executa nada
+--   Consistencia — o banco permanece integro antes e apos
+--   Isolamento   — transacoes concorrentes nao se interferem
+--   Durabilidade — apos COMMIT, o dado e permanente
+-- ============================================================
+
+-- ----------------------------------------------------------
+-- Cenario 1: ROLLBACK — desfazendo uma operacao com erro
+-- Simula tentativa de cadastro que precisa ser desfeita
+-- ----------------------------------------------------------
+
+SELECT COUNT(*) AS total_alunos_antes FROM aluno;
+
+START TRANSACTION;
+
+INSERT INTO aluno (rga, cpf, nome, sobrenome, data_nascimento, status)
+VALUES ('A0000001', '99999999901', 'Aluno', 'Rollback', '2000-01-01', 'Ativo');
+
+-- erro detectado antes do commit (ex: CPF invalido na validacao da aplicacao)
+ROLLBACK;
+
+-- validacao: registro NAO deve existir apos ROLLBACK
+SELECT COUNT(*) AS total_alunos_apos_rollback FROM aluno;
+-- resultado esperado: mesmo valor do total_alunos_antes
+
+SELECT rga FROM aluno WHERE rga = 'A0000001';
+-- resultado esperado: 0 linhas — atomicidade garantida
+
+-- ----------------------------------------------------------
+-- Cenario 2: COMMIT — confirmando uma operacao valida
+-- Mesmo INSERT, agora confirmado com COMMIT
+-- ----------------------------------------------------------
+
+START TRANSACTION;
+
+INSERT INTO aluno (rga, cpf, nome, sobrenome, data_nascimento, status)
+VALUES ('A0000001', '99999999901', 'Aluno', 'Commit', '2000-01-01', 'Ativo');
+
+COMMIT;
+
+-- validacao: registro DEVE existir apos COMMIT
+SELECT rga, nome, sobrenome, status
+FROM aluno
+WHERE rga = 'A0000001';
+-- resultado esperado: 1 linha — durabilidade confirmada
+
+-- limpeza do registro de teste
+DELETE FROM aluno WHERE rga = 'A0000001';
+
+-- ----------------------------------------------------------
+-- Cenario 3 (diferencial): Transacao com multiplas operacoes
+-- Simula matricula atomica: aluno + matricula devem ser inseparaveis
+-- Se um INSERT falhar, o outro tambem deve ser desfeito
+-- ----------------------------------------------------------
+
+START TRANSACTION;
+
+INSERT INTO aluno (rga, cpf, nome, sobrenome, data_nascimento, status)
+VALUES ('A0000099', '88888888801', 'Novo', 'Aluno', '2001-06-15', 'Ativo');
+
+INSERT INTO matricula (fk_rga, fk_curso, data_matricula, status, ano_ingresso)
+VALUES ('A0000099', 'ADS', CURDATE(), 'Cursando', 2024);
+
+-- simulando deteccao de inconsistencia antes do commit
+-- (ex: documentacao pendente, regra de negocio violada)
+ROLLBACK;
+
+-- validacao: nenhuma das duas operacoes deve ter persistido
+SELECT rga  FROM aluno    WHERE rga    = 'A0000099';  -- esperado: 0 linhas
+SELECT fk_rga FROM matricula WHERE fk_rga = 'A0000099';  -- esperado: 0 linhas
+-- conclusao: atomicidade garante que aluno nunca existe sem matricula
