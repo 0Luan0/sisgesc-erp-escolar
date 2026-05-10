@@ -50,7 +50,7 @@ O MySQL está em `/usr/local/mysql/bin/mysql`. O SOURCE não aceita caminhos com
 ## Resultado esperado após execução limpa
 
 - **33 tabelas** em `erp_escolar`
-- **5 tabelas** em `erp_escolar_olap`
+- **10 tabelas** em `erp_escolar_olap` (6 dims + 4 fatos)
 - `ferias`: 3 registros, `conjuge_funcionario`: 2 registros
 - Validação financeira: `soma_oltp = soma_olap = 36387.50`, `diferenca = 0.00`
 - ACID: rollback → 8 alunos antes = 8 depois; commit → A0000009 persiste

@@ -164,7 +164,7 @@ CREATE INDEX idx_matricula_curso_status
 CREATE INDEX idx_frequencia_matricula_turma
     ON frequencia (fk_id_matricula, fk_id_turma);
 
--- OLAP — Fato
+-- OLAP — ft_receita_mensalidade
 -- queries analiticas filtram e agrupam por tempo e curso com frequencia
 CREATE INDEX idx_ft_tempo
     ON erp_escolar_olap.ft_receita_mensalidade (fk_id_tempo);
@@ -174,6 +174,27 @@ CREATE INDEX idx_ft_curso_tempo
 
 CREATE INDEX idx_ft_status
     ON erp_escolar_olap.ft_receita_mensalidade (status_mensalidade);
+
+-- OLAP — ft_desempenho_academico
+-- filtros mais comuns: aluno, materia, semestre
+CREATE INDEX idx_fda_aluno_materia
+    ON erp_escolar_olap.ft_desempenho_academico (fk_id_aluno, fk_id_materia);
+
+CREATE INDEX idx_fda_curso_ano
+    ON erp_escolar_olap.ft_desempenho_academico (fk_id_curso, ano_letivo, semestre_letivo);
+
+-- OLAP — ft_folha_rh
+-- filtros por tempo (mes) e funcionario para relatorios de folha
+CREATE INDEX idx_ffr_tempo
+    ON erp_escolar_olap.ft_folha_rh (fk_id_tempo);
+
+CREATE INDEX idx_ffr_funcionario
+    ON erp_escolar_olap.ft_folha_rh (fk_id_funcionario);
+
+-- OLAP — ft_movimentacao_rh
+-- filtros por tipo de evento e periodo para analise de turnover
+CREATE INDEX idx_fmr_tipo_tempo
+    ON erp_escolar_olap.ft_movimentacao_rh (tipo_movimentacao, fk_id_tempo);
 
 -- ============================================================
 -- PARTE 4: EXPLAIN DEPOIS DOS INDICES
@@ -289,3 +310,53 @@ SELECT
 FROM ft_receita_mensalidade
 GROUP BY tem_bolsa
 ORDER BY tem_bolsa DESC;
+
+-- 6D: Desempenho academico por materia — nota media e frequencia
+-- Responde: qual materia tem menor media? Qual tem pior presenca?
+SELECT
+    dm.nome_materia,
+    dc.nome_curso,
+    COUNT(*)                                   AS alunos_avaliados,
+    ROUND(AVG(fda.nota_final), 2)              AS nota_media,
+    MIN(fda.nota_final)                        AS nota_minima,
+    MAX(fda.nota_final)                        AS nota_maxima,
+    ROUND(AVG(fda.percentual_presenca), 1)     AS presenca_media_pct,
+    SUM(CASE WHEN fda.nota_final >= 6 THEN 1 ELSE 0 END) AS aprovados,
+    SUM(CASE WHEN fda.nota_final < 6  THEN 1 ELSE 0 END) AS reprovados
+FROM ft_desempenho_academico fda
+JOIN dim_materia              dm  ON dm.pk_id_materia = fda.fk_id_materia
+JOIN dim_curso                dc  ON dc.pk_id_curso   = fda.fk_id_curso
+WHERE fda.nota_final IS NOT NULL
+GROUP BY dm.pk_id_materia, dc.pk_id_curso
+ORDER BY nota_media ASC;
+
+-- 6E: Custo total de folha por mes e por departamento
+-- Responde: qual departamento pesa mais na folha? Como evoluiu mensalmente?
+SELECT
+    dt.nome_mes,
+    dt.ano,
+    df.nome_departamento,
+    COUNT(DISTINCT ff.fk_id_funcionario)  AS funcionarios,
+    SUM(ff.salario_bruto)                 AS total_bruto,
+    SUM(ff.total_proventos)               AS total_proventos,
+    SUM(ff.total_descontos)               AS total_descontos,
+    SUM(ff.salario_liquido)               AS total_liquido
+FROM ft_folha_rh      ff
+JOIN dim_tempo        dt ON dt.pk_id_tempo        = ff.fk_id_tempo
+JOIN dim_funcionario  df ON df.pk_id_funcionario  = ff.fk_id_funcionario
+GROUP BY dt.pk_id_tempo, df.nome_departamento
+ORDER BY dt.pk_id_tempo, total_bruto DESC;
+
+-- 6F: Movimentacao de RH — headcount e admissoes por periodo
+-- Responde: em qual mes contratamos mais? Qual e o tempo medio de empresa?
+SELECT
+    dt.ano,
+    dt.nome_mes,
+    SUM(CASE WHEN fm.tipo_movimentacao = 'Admissao'    THEN 1 ELSE 0 END) AS admissoes,
+    SUM(CASE WHEN fm.tipo_movimentacao = 'Desligamento' THEN 1 ELSE 0 END) AS desligamentos,
+    ROUND(AVG(CASE WHEN fm.tipo_movimentacao = 'Desligamento'
+                   THEN fm.dias_empresa END), 0)                           AS tempo_medio_dias
+FROM ft_movimentacao_rh fm
+JOIN dim_tempo          dt ON dt.pk_id_tempo = fm.fk_id_tempo
+GROUP BY dt.pk_id_tempo
+ORDER BY dt.pk_id_tempo;
