@@ -7,7 +7,5 @@
 erp_escolar_v12.sql
 erp_escolar_v13.sql
 
-<<<<<<< HEAD
---staged CLAUDE.md
-=======
->>>>>>> 89a46ac (fix: corrige 3 bugs criticos antes da entrega)
+# arquivos internos de tooling
+CLAUDE.md
