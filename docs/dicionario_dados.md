@@ -1,7 +1,7 @@
 # Dicionário de Dados — SisGESC (ERP Escolar)
 
-Sistema de gestão escolar com três módulos: RH, Acadêmico e Financeiro.
-Dialeto: MySQL 8+ · Charset: utf8mb4_unicode_ci · Schema: `erp_escolar`
+Sistema de gestão escolar com três módulos: RH, Acadêmico e Financeiro. Inclui Star Schema OLAP em banco separado (`erp_escolar_olap`).
+Dialeto: MySQL 8+ · Charset: utf8mb4_unicode_ci · Schemas: `erp_escolar` (OLTP) e `erp_escolar_olap` (OLAP)
 
 ---
 
@@ -16,7 +16,7 @@ Todas seguem o mesmo padrão: PK = o próprio valor VARCHAR. Sem surrogate, sem 
 | `status_matricula_turma` | status | Cursando, Aprovado, Reprovado |
 | `status_funcionario` | status | Ativo, Afastado, Desligado |
 | `status_contrato` | status | Ativo, Encerrado, Suspenso, Cancelado |
-| `status_mensalidade` | status | Pendente, Pago, Atrasado, Cancelado |
+| `status_mensalidade` | status | Pendente, Pago, Atrasado, Cancelado, Parcial |
 | `status_pagamento` | status | Pendente, Pago, Cancelado |
 | `status_ferias` | status | Planejada, Em andamento, Concluida, Cancelada |
 | `status_folha` | status | Em processamento, Paga, Cancelada |
@@ -29,6 +29,20 @@ Todas seguem o mesmo padrão: PK = o próprio valor VARCHAR. Sem surrogate, sem 
 | `tipo_ponto` | tipo | Entrada, Saida, Intervalo, Retorno intervalo |
 | `metodo_pagamento` | metodo | Pix, Boleto, Cartao, Transferencia, Dinheiro |
 | `nivel_ensino` | nivel | Tecnico, Tecnologo, Bacharelado, Pos-Graduacao |
+| `tipo_feriado` | tipo | Nacional, Estadual, Municipal, Escolar |
+
+---
+
+## Tabela de Referência
+
+### `feriado`
+Catálogo de feriados. Utilizado como referência para consultas de frequência e planejamento acadêmico. Não interfere no cálculo automático de frequência (que é registro-driven via tabela `frequencia`).
+
+| Coluna | Tipo | Restrições | Descrição |
+|---|---|---|---|
+| `data` | DATE | PK | Data do feriado. PK natural — única, estável, imutável. |
+| `nome` | VARCHAR(100) | NOT NULL | Ex: "Independencia do Brasil". |
+| `tipo` | VARCHAR(20) | FK → tipo_feriado | Nacional, Estadual, Municipal ou Escolar. |
 
 ---
 
@@ -247,6 +261,32 @@ Período de gozo vinculado a um período aquisitivo.
 | `data_inicio` | DATE | NOT NULL | Trigger: deve estar dentro do período aquisitivo. |
 | `data_fim` | DATE | NOT NULL | |
 | `status` | VARCHAR(20) | FK → status_ferias | |
+
+---
+
+### `abono_ferias`
+Venda de parte das férias (até 10 dias) pelo funcionário. Relação 1:1 com `periodo_aquisitivo` — PK herdada.
+
+| Coluna | Tipo | Restrições | Descrição |
+|---|---|---|---|
+| `fk_id_periodo` | INT | PK, FK → periodo_aquisitivo | Herda a identidade do período aquisitivo. |
+| `dias_vendidos` | INT | NOT NULL, CHECK 1–10 | Limite legal de 10 dias vendidos. |
+| `valor` | DECIMAL(10,2) | NOT NULL, CHECK > 0 | Valor calculado pela aplicação. |
+| `data_solicitacao` | DATE | NOT NULL | Data do pedido de abono. |
+
+---
+
+### `conjuge_funcionario`
+Registro de casais dentro do quadro de funcionários. Auto-relacionamento simétrico de `funcionario`. A constraint `CHECK (fk_rgf_1 < fk_rgf_2)` elimina o par invertido e garante unicidade sem duplicar a linha (A,B) e (B,A).
+
+| Coluna | Tipo | Restrições | Descrição |
+|---|---|---|---|
+| `fk_rgf_1` | CHAR(5) | PK + FK → funcionario | Por convenção, sempre o RGF menor. |
+| `fk_rgf_2` | CHAR(5) | PK + FK → funcionario | Por convenção, sempre o RGF maior. |
+| `tipo_uniao` | VARCHAR(20) | NOT NULL, CHECK IN (...) | Casamento ou Uniao Estavel. |
+| `data_uniao` | DATE | NOT NULL | |
+
+**Regras:** `fk_rgf_1 != fk_rgf_2` (funcionário não pode ser cônjuge de si mesmo); `fk_rgf_1 < fk_rgf_2` (elimina par invertido); ambas FKs com `ON UPDATE RESTRICT` (evita ERROR 3823 com CHECK constraints no MySQL).
 
 ---
 
@@ -495,63 +535,167 @@ Registro de quitação de uma mensalidade. Pix e boleto delegados a API externa 
 
 ---
 
+### `pagamento_a_vista`
+Cabeçalho de pagamento que quita uma ou mais mensalidades em uma única transação. Fluxo alternativo ao `pagamento` recorrente — usado quando o aluno quita presencialmente. Trigger valida que o contrato está `Ativo` antes de inserir.
+
+| Coluna | Tipo | Restrições | Descrição |
+|---|---|---|---|
+| `pk_id_avista` | INT | PK surrogate | |
+| `fk_id_contrato` | INT | FK → contrato | |
+| `metodo` | VARCHAR(30) | FK → metodo_pagamento | |
+| `valor_total` | DECIMAL(10,2) | NOT NULL, CHECK > 0 | Valor total pago na transação. |
+| `data_pagamento` | DATE | NOT NULL | |
+| `status` | VARCHAR(20) | FK → status_pagamento | |
+
+---
+
+### `pagamento_avista_mensalidade`
+N:N entre `pagamento_a_vista` e `mensalidade`. Mapeia quais mensalidades foram cobertas pelo pagamento à vista. PK composta de três campos — não há atributos além das FKs.
+
+| Coluna | Tipo | Restrições | Descrição |
+|---|---|---|---|
+| `fk_id_avista` | INT | PK + FK → pagamento_a_vista | |
+| `fk_id_contrato` | INT | PK + FK → mensalidade (composta) | |
+| `periodo` | CHAR(7) | PK + FK → mensalidade (composta) | Formato YYYY-MM. |
+
+---
+
 ## Views OLTP
 
-| View | Calcula | Motivo de ser view |
+Campos derivados nunca são armazenados (critério 4 do projeto). Todos viram view calculada sob demanda.
+
+| View | Calcula | Tabelas base |
 |---|---|---|
-| `vw_valor_mensalidade` | `valor_final = valor_base - valor_desconto` | Campo derivado — nunca armazenar (critério 4). |
-| `vw_nota_final` | `SUM(nota * peso) / SUM(peso)` por aluno/turma | Média ponderada é derivada das notas e pesos. |
-| `vw_salario_liquido` | `salario_bruto + proventos - descontos` por folha | Líquido é derivado dos eventos de folha. |
+| `vw_valor_mensalidade` | `valor_final = valor_base - valor_desconto` por mensalidade | `mensalidade` |
+| `vw_nota_final` | `SUM(nota * peso) / SUM(peso)` por aluno/turma | `nota`, `avaliacao` |
+| `vw_salario_liquido` | `salario_bruto + proventos - descontos` por funcionário/período | `folha_pagamentos`, `folha_evento`, `evento_folha` |
+| `vw_inadimplencia` | Mensalidades em atraso com dados do aluno e contrato | `mensalidade`, `atraso_mensalidade`, `contrato`, `matricula`, `aluno` |
+| `vw_funcionario_aluno` | Lista unificada de CPFs (funcionários + alunos) para impedir duplicidade entre módulos | `funcionario`, `aluno` |
 
 ---
 
 ## Star Schema OLAP — `erp_escolar_olap`
 
+Banco separado do OLTP para isolar carga analítica. Segue a metodologia Kimball: surrogate keys (SK_) nas dimensões, FKs com prefixo `fk_SK_` nas fatos. 8 dimensões + 7 tabelas fato.
+
+### Dimensões
+
+---
+
 ### `dim_tempo`
+PK natural YYYYMM — o próprio valor identifica univocamente o período. Sem surrogate.
+
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_tempo` | INT | PK natural YYYYMM (ex: 202402). |
+| `SK_tempo` | INT | PK natural YYYYMM (ex: 202402). |
 | `ano` | YEAR | |
 | `mes` | TINYINT | 1–12 |
 | `nome_mes` | VARCHAR(20) | Janeiro … Dezembro |
 | `trimestre` | TINYINT | 1–4 |
 | `semestre` | TINYINT | 1–2 |
+| `dia_semana` | TINYINT | 1=Segunda … 7=Domingo (ISO). Dia 1 do mês como referência. |
+| `nome_dia_semana` | VARCHAR(15) | Ex: Segunda-Feira. Calculado no ETL via WEEKDAY(). |
+
+---
 
 ### `dim_aluno`
+Surrogate: isolamento do OLTP, suporta SCD futura.
+
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_aluno` | INT | Surrogate. |
+| `SK_aluno` | INT | PK surrogate AUTO_INCREMENT. |
 | `rga` | CHAR(8) | UNIQUE — chave de lookup para o ETL. |
 | `nome_completo` | VARCHAR(202) | Snapshot no momento da carga. |
 | `ano_ingresso` | YEAR | |
 | `curso_ingresso` | CHAR(3) | Curso na matrícula ativa (snapshot). |
 
+---
+
 ### `dim_curso`
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_curso` | INT | Surrogate. |
+| `SK_curso` | INT | PK surrogate AUTO_INCREMENT. |
 | `codigo_curso` | CHAR(3) | UNIQUE — chave de lookup. |
 | `nome_curso` | VARCHAR(100) | |
 | `nivel_ensino` | VARCHAR(30) | |
 
+---
+
 ### `dim_unidade`
-Agrupamento analítico de cursos por área acadêmica. Não existe no OLTP — derivada no ETL via mapeamento `codigo_curso → area`.
+Agrupamento analítico de cursos por área acadêmica. Não existe no OLTP — criada no ETL via mapeamento fixo: ADS → Tecnologia da Informacao, ENF → Ciencias da Saude, LOG → Gestao e Negocios.
 
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_unidade` | INT | Surrogate. |
-| `nome_unidade` | VARCHAR(60) | Tecnologia da Informacao, Ciencias da Saude, Gestao e Negocios. |
+| `SK_unidade` | INT | PK surrogate AUTO_INCREMENT. |
+| `nome_unidade` | VARCHAR(60) | UNIQUE. |
+
+---
+
+### `dim_materia`
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `SK_materia` | INT | PK surrogate AUTO_INCREMENT. |
+| `codigo_materia` | CHAR(5) | UNIQUE — chave de lookup. |
+| `nome_materia` | VARCHAR(60) | |
+| `carga_horaria` | INT | Horas totais da matéria. |
+
+---
+
+### `dim_funcionario`
+Snapshot dos atributos descritivos do funcionário no momento da carga ETL.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `SK_funcionario` | INT | PK surrogate AUTO_INCREMENT. |
+| `rgf` | CHAR(5) | UNIQUE — chave de lookup para o ETL. |
+| `nome_completo` | VARCHAR(101) | Snapshot. |
+| `codigo_cargo` | CHAR(3) | Snapshot. |
+| `nome_cargo` | VARCHAR(120) | Snapshot. |
+| `nome_departamento` | VARCHAR(100) | Snapshot. |
+| `nivel_cargo` | VARCHAR(10) | Junior, Pleno, Senior. |
+| `data_admissao` | DATE | |
+
+---
+
+### `dim_professor`
+Subconjunto especializado de `dim_funcionario`: apenas docentes. Mantida separada porque carrega atributos próprios (`formacao`, `especialidade`) que não existem em `dim_funcionario`.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `SK_professor` | INT | PK surrogate AUTO_INCREMENT. |
+| `rgf` | CHAR(5) | UNIQUE — chave de lookup. |
+| `nome_completo` | VARCHAR(101) | Snapshot. |
+| `formacao` | VARCHAR(100) | NULL se não cadastrado no OLTP. |
+| `especialidade` | VARCHAR(100) | NULL se não cadastrado no OLTP. |
+| `nome_departamento` | VARCHAR(100) | Snapshot. |
+| `data_admissao` | DATE | |
+
+---
+
+### `dim_metodo_pagamento`
+Vocabulário controlado carregado de `metodo_pagamento` (OLTP). Surrogate para uniformizar JOINs com as demais dimensões.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `SK_metodo` | INT | PK surrogate AUTO_INCREMENT. |
+| `nome_metodo` | VARCHAR(30) | UNIQUE. Ex: Pix, Boleto, Dinheiro. |
+
+---
+
+### Fatos
+
+---
 
 ### `ft_receita_mensalidade`
-Tabela fato. Grain: 1 linha por mensalidade gerada no OLTP.
+Grain: 1 linha por mensalidade gerada no OLTP. Permite análise de receita bruta, descontos e inadimplência por período/curso/aluno.
 
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_fato` | INT | Surrogate. |
-| `fk_id_tempo` | INT | FK → dim_tempo |
-| `fk_id_aluno` | INT | FK → dim_aluno |
-| `fk_id_curso` | INT | FK → dim_curso |
-| `fk_id_unidade` | INT | FK → dim_unidade |
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_tempo` | INT | FK → dim_tempo (período da cobrança YYYYMM). |
+| `fk_SK_aluno` | INT | FK → dim_aluno |
+| `fk_SK_curso` | INT | FK → dim_curso |
+| `fk_SK_unidade` | INT | FK → dim_unidade |
 | `valor_base` | DECIMAL(10,2) | Métrica aditiva. |
 | `valor_desconto` | DECIMAL(10,2) | Métrica aditiva. |
 | `valor_liquido` | DECIMAL(10,2) | `valor_base - valor_desconto`. |
@@ -561,47 +705,20 @@ Tabela fato. Grain: 1 linha por mensalidade gerada no OLTP.
 
 ---
 
-### `dim_materia`
-Dimensão de matérias ativas no momento da carga ETL.
-
-| Coluna | Tipo | Descrição |
-|---|---|---|
-| `pk_id_materia` | INT | Surrogate AUTO_INCREMENT. |
-| `codigo_materia` | CHAR(5) | UNIQUE — chave de lookup. |
-| `nome_materia` | VARCHAR(60) | |
-| `carga_horaria` | INT | Horas totais da matéria. |
-
----
-
-### `dim_funcionario`
-Snapshot dos atributos descritivos do funcionário no momento da carga ETL. Isola o OLAP do OLTP e permite SCD futura.
-
-| Coluna | Tipo | Descrição |
-|---|---|---|
-| `pk_id_funcionario` | INT | Surrogate AUTO_INCREMENT. |
-| `rgf` | CHAR(5) | UNIQUE — chave de lookup para o ETL. |
-| `nome_completo` | VARCHAR(101) | Snapshot no momento da carga. |
-| `codigo_cargo` | CHAR(3) | |
-| `nome_cargo` | VARCHAR(120) | Snapshot. |
-| `nome_departamento` | VARCHAR(100) | Snapshot. |
-| `nivel_cargo` | VARCHAR(10) | Junior, Pleno, Senior. |
-| `data_admissao` | DATE | |
-
----
-
 ### `ft_desempenho_academico`
-Tabela fato. Grain: 1 linha por (aluno × turma) = aluno × matéria × semestre letivo. Permite análise de aprovação, reprovação, frequência e nota média por curso/matéria/período.
+Grain: 1 linha por (aluno × turma) = aluno × matéria × semestre letivo.
 
-**Nota de design:** usa `ano_letivo` e `semestre_letivo` como degenerate dimensions (não FK para `dim_tempo`) porque o período acadêmico é semestral, enquanto `dim_tempo` é mensal.
+**Nota de design:** `ano_letivo`, `semestre_letivo` e `turno` são degenerate dimensions — o período acadêmico é semestral, não mensal, portanto não há FK para `dim_tempo`.
 
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_fato` | INT | Surrogate. |
-| `fk_id_aluno` | INT | FK → dim_aluno |
-| `fk_id_curso` | INT | FK → dim_curso |
-| `fk_id_materia` | INT | FK → dim_materia |
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_aluno` | INT | FK → dim_aluno |
+| `fk_SK_curso` | INT | FK → dim_curso |
+| `fk_SK_materia` | INT | FK → dim_materia |
 | `ano_letivo` | YEAR | Degenerate dimension. |
 | `semestre_letivo` | TINYINT | 1 ou 2. Degenerate dimension. |
+| `turno` | VARCHAR(10) | Degenerate dimension: Manha, Tarde ou Noite. |
 | `nota_final` | DECIMAL(4,2) | Média ponderada; NULL se sem avaliação registrada. |
 | `total_aulas` | INT | Aulas registradas na frequência. |
 | `total_presencas` | INT | |
@@ -611,15 +728,15 @@ Tabela fato. Grain: 1 linha por (aluno × turma) = aluno × matéria × semestre
 ---
 
 ### `ft_folha_rh`
-Tabela fato. Grain: 1 linha por (funcionário × período mensal). Permite análise de custo de pessoal por departamento e por mês.
+Grain: 1 linha por (funcionário × período mensal).
 
-**Nota de design:** `salario_liquido` é métrica agregada do OLAP (snapshot do mês processado), análoga aos snapshots financeiros do módulo Financeiro — não é campo derivado proibido pelo critério 4.
+**Nota de design:** `salario_liquido` é snapshot OLAP intencional — análogo aos snapshots financeiros do módulo Financeiro. Não é campo derivado proibido (critério 4).
 
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_fato` | INT | Surrogate. |
-| `fk_id_funcionario` | INT | FK → dim_funcionario |
-| `fk_id_tempo` | INT | FK → dim_tempo (YYYYMM) |
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_funcionario` | INT | FK → dim_funcionario |
+| `fk_SK_tempo` | INT | FK → dim_tempo (YYYYMM) |
 | `salario_bruto` | DECIMAL(10,2) | Snapshot do período. |
 | `total_proventos` | DECIMAL(10,2) | Soma dos eventos tipo Provento. |
 | `total_descontos` | DECIMAL(10,2) | Soma dos eventos tipo Desconto. |
@@ -629,32 +746,91 @@ Tabela fato. Grain: 1 linha por (funcionário × período mensal). Permite anál
 ---
 
 ### `ft_movimentacao_rh`
-Tabela fato. Grain: 1 linha por evento de admissão ou desligamento. Permite análise de headcount, turnover e tempo médio de empresa.
+Grain: 1 linha por evento de admissão ou desligamento. Permite análise de headcount, turnover e tempo médio de empresa.
 
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `pk_id_fato` | INT | Surrogate. |
-| `fk_id_funcionario` | INT | FK → dim_funcionario |
-| `fk_id_tempo` | INT | FK → dim_tempo (mês do evento) |
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_funcionario` | INT | FK → dim_funcionario |
+| `fk_SK_tempo` | INT | FK → dim_tempo (mês do evento) |
 | `tipo_movimentacao` | VARCHAR(20) | `Admissao` ou `Desligamento`. CHECK constraint. |
 | `dias_empresa` | INT | 0 na admissão; `DATEDIFF(desligamento, admissao)` na saída. |
 | `data_evento` | DATE | Data exata do evento. |
 
 ---
 
+### `ft_inadimplencia`
+Grain: 1 linha por mensalidade com atraso registrado em `atraso_mensalidade`. Permite análise de inadimplência por curso, período e perfil de aluno.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_tempo` | INT | FK → dim_tempo (período da mensalidade). |
+| `fk_SK_aluno` | INT | FK → dim_aluno |
+| `fk_SK_curso` | INT | FK → dim_curso |
+| `dias_atraso` | INT | Métrica aditiva. |
+| `valor_multa` | DECIMAL(10,2) | Métrica aditiva. |
+| `valor_juros` | DECIMAL(10,2) | Métrica aditiva. |
+| `valor_em_aberto` | DECIMAL(10,2) | `valor_liquido - total_pago` no momento do ETL. |
+| `recuperado` | TINYINT(1) | 1 se `mensalidade.status = 'Pago'` (quitada após o atraso). |
+
+---
+
+### `ft_carga_docente`
+Grain: 1 linha por (professor × turma × semestre letivo). Permite avaliar performance e carga de trabalho docente.
+
+**Nota de design:** sem `fk_SK_tempo` — o período acadêmico é semestral (degenerate dims `ano_letivo` + `semestre_letivo`), seguindo o mesmo padrão de `ft_desempenho_academico`.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_professor` | INT | FK → dim_professor |
+| `fk_SK_curso` | INT | FK → dim_curso |
+| `fk_SK_materia` | INT | FK → dim_materia |
+| `ano_letivo` | YEAR | Degenerate dimension. |
+| `semestre_letivo` | TINYINT | 1 ou 2. Degenerate dimension. |
+| `turno` | VARCHAR(10) | Degenerate dimension: Manha, Tarde ou Noite. |
+| `qtd_alunos` | INT | Total de alunos inscritos na turma. |
+| `nota_media_turma` | DECIMAL(4,2) | Média ponderada de todos os alunos; NULL se sem avaliação. |
+| `presenca_media_pct` | DECIMAL(5,2) | Percentual médio de presença da turma. |
+| `qtd_aprovados` | INT | |
+| `qtd_reprovados` | INT | |
+
+---
+
+### `ft_pagamento`
+Grain: 1 linha por registro na tabela `pagamento` do OLTP (cashflow efetivo). `fk_SK_tempo` referencia o mês do pagamento efetivo, não o período da cobrança — permite responder "quanto entrou no caixa em agosto?" independente do vencimento.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_fato` | INT | PK surrogate. |
+| `fk_SK_tempo` | INT | FK → dim_tempo (mês do pagamento efetivo). |
+| `fk_SK_aluno` | INT | FK → dim_aluno |
+| `fk_SK_curso` | INT | FK → dim_curso |
+| `fk_SK_metodo` | INT | FK → dim_metodo_pagamento |
+| `valor_pago` | DECIMAL(10,2) | Métrica aditiva. |
+
+---
+
 ## ETL — Estratégia de Carga OLAP
 
-Estratégia **full reload** (TRUNCATE + INSERT): idempotente, produz o mesmo resultado independente de quantas vezes for executado. Ordem de carga: dimensões primeiro, fatos por último (respeita integridade referencial).
+Estratégia **full reload** (TRUNCATE + INSERT): idempotente, produz o mesmo resultado independente de quantas vezes for executado. STEP 0 trunca todas as tabelas na ordem inversa das FKs (fatos antes de dims). STEPs 1–15 carregam dims primeiro, fatos por último.
 
 | Step | Tabela | Fonte OLTP |
 |---|---|---|
-| 1 | `dim_tempo` | UNION de `mensalidade.periodo`, `folha_pagamentos.periodo`, datas de admissão/desligamento |
-| 2 | `dim_unidade` | Mapeamento fixo: ADS → TI, ENF → Saúde, LOG → Gestão |
+| 0 | TRUNCATE (todas) | Ordem inversa das FKs para respeitar integridade referencial |
+| 1 | `dim_tempo` | UNION: `mensalidade.periodo`, `folha_pagamentos.periodo`, datas admissão/desligamento, `pagamento.data_pagamento` |
+| 2 | `dim_unidade` | Mapeamento fixo: ADS→TI, ENF→Saúde, LOG→Gestão |
 | 3 | `dim_curso` | `curso` (apenas ativos) |
 | 4 | `dim_aluno` | `aluno` + `matricula` (status Cursando) |
 | 5 | `ft_receita_mensalidade` | `mensalidade` + `pagamento` (LEFT JOIN agregado) |
 | 6 | `dim_materia` | `materia` (apenas ativas) |
 | 7 | `dim_funcionario` | `funcionario` + `cargo` |
-| 8 | `ft_desempenho_academico` | `matricula_turma` + `nota`/`avaliacao` + `frequencia` (subqueries pré-agregadas para evitar produto cartesiano) |
-| 9 | `ft_folha_rh` | `folha_pagamentos` + `folha_evento` + `evento_folha` |
-| 10 | `ft_movimentacao_rh` | `funcionario` (admissão + desligamento via UNION ALL) |
+| 8 | `dim_professor` | `professor` + `funcionario` + `cargo` (WHERE ativo=TRUE) |
+| 9 | `dim_metodo_pagamento` | `metodo_pagamento` |
+| 10 | `ft_desempenho_academico` | `matricula_turma` + `nota`/`avaliacao` + `frequencia` |
+| 11 | `ft_folha_rh` | `folha_pagamentos` + `folha_evento` + `evento_folha` |
+| 12 | `ft_movimentacao_rh` | `funcionario` (admissão + desligamento via UNION ALL) |
+| 13 | `ft_inadimplencia` | `atraso_mensalidade` + `mensalidade` + `contrato` + `matricula` |
+| 14 | `ft_carga_docente` | `turma` + `matricula_turma` + `nota`/`avaliacao` + `frequencia` |
+| 15 | `ft_pagamento` | `pagamento` + `contrato` + `matricula` |
