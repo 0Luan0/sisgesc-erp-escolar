@@ -65,8 +65,8 @@ JOIN (
         CONCAT(dt.ano, '-', LPAD(dt.mes, 2, '0')) AS periodo,
         SUM(ft.valor_pago)                         AS soma_olap
     FROM erp_escolar_olap.ft_receita_mensalidade ft
-    JOIN erp_escolar_olap.dim_tempo dt ON dt.pk_id_tempo = ft.fk_id_tempo
-    GROUP BY dt.pk_id_tempo
+    JOIN erp_escolar_olap.dim_tempo dt ON dt.SK_tempo = ft.fk_SK_tempo
+    GROUP BY dt.SK_tempo
 ) olap ON oltp.periodo = olap.periodo
 ORDER BY oltp.periodo;
 
@@ -97,7 +97,7 @@ JOIN (
         dc.codigo_curso,
         SUM(ft.valor_pago) AS soma_olap
     FROM erp_escolar_olap.ft_receita_mensalidade ft
-    JOIN erp_escolar_olap.dim_curso dc ON dc.pk_id_curso = ft.fk_id_curso
+    JOIN erp_escolar_olap.dim_curso dc ON dc.SK_curso = ft.fk_SK_curso
     GROUP BY dc.codigo_curso
 ) olap ON oltp.codigo_curso = olap.codigo_curso
 ORDER BY oltp.codigo_curso;
@@ -167,10 +167,10 @@ CREATE INDEX idx_frequencia_matricula_turma
 -- OLAP — ft_receita_mensalidade
 -- queries analiticas filtram e agrupam por tempo e curso com frequencia
 CREATE INDEX idx_ft_tempo
-    ON erp_escolar_olap.ft_receita_mensalidade (fk_id_tempo);
+    ON erp_escolar_olap.ft_receita_mensalidade (fk_SK_tempo);
 
 CREATE INDEX idx_ft_curso_tempo
-    ON erp_escolar_olap.ft_receita_mensalidade (fk_id_curso, fk_id_tempo);
+    ON erp_escolar_olap.ft_receita_mensalidade (fk_SK_curso, fk_SK_tempo);
 
 CREATE INDEX idx_ft_status
     ON erp_escolar_olap.ft_receita_mensalidade (status_mensalidade);
@@ -178,23 +178,23 @@ CREATE INDEX idx_ft_status
 -- OLAP — ft_desempenho_academico
 -- filtros mais comuns: aluno, materia, semestre
 CREATE INDEX idx_fda_aluno_materia
-    ON erp_escolar_olap.ft_desempenho_academico (fk_id_aluno, fk_id_materia);
+    ON erp_escolar_olap.ft_desempenho_academico (fk_SK_aluno, fk_SK_materia);
 
 CREATE INDEX idx_fda_curso_ano
-    ON erp_escolar_olap.ft_desempenho_academico (fk_id_curso, ano_letivo, semestre_letivo);
+    ON erp_escolar_olap.ft_desempenho_academico (fk_SK_curso, ano_letivo, semestre_letivo);
 
 -- OLAP — ft_folha_rh
 -- filtros por tempo (mes) e funcionario para relatorios de folha
 CREATE INDEX idx_ffr_tempo
-    ON erp_escolar_olap.ft_folha_rh (fk_id_tempo);
+    ON erp_escolar_olap.ft_folha_rh (fk_SK_tempo);
 
 CREATE INDEX idx_ffr_funcionario
-    ON erp_escolar_olap.ft_folha_rh (fk_id_funcionario);
+    ON erp_escolar_olap.ft_folha_rh (fk_SK_funcionario);
 
 -- OLAP — ft_movimentacao_rh
 -- filtros por tipo de evento e periodo para analise de turnover
 CREATE INDEX idx_fmr_tipo_tempo
-    ON erp_escolar_olap.ft_movimentacao_rh (tipo_movimentacao, fk_id_tempo);
+    ON erp_escolar_olap.ft_movimentacao_rh (tipo_movimentacao, fk_SK_tempo);
 
 -- ============================================================
 -- PARTE 4: EXPLAIN DEPOIS DOS INDICES
@@ -283,27 +283,27 @@ SELECT
     SUM(ft.valor_pago)                                   AS receita_realizada,
     ROUND(SUM(ft.valor_pago) / SUM(ft.valor_liquido) * 100, 1) AS taxa_pagamento_pct
 FROM ft_receita_mensalidade ft
-JOIN dim_tempo              dt ON dt.pk_id_tempo = ft.fk_id_tempo
-GROUP BY dt.pk_id_tempo, dt.nome_mes, dt.ano
-ORDER BY dt.pk_id_tempo;
+JOIN dim_tempo              dt ON dt.SK_tempo = ft.fk_SK_tempo
+GROUP BY dt.SK_tempo, dt.nome_mes, dt.ano
+ORDER BY dt.SK_tempo;
 
 -- 6B: Faturamento por unidade academica
 -- Responde: qual area gera mais receita?
 SELECT
     du.nome_unidade,
-    COUNT(DISTINCT ft.fk_id_aluno)  AS alunos,
+    COUNT(DISTINCT ft.fk_SK_aluno)  AS alunos,
     SUM(ft.valor_liquido)           AS receita_esperada,
     SUM(ft.valor_pago)              AS receita_realizada
 FROM ft_receita_mensalidade ft
-JOIN dim_unidade             du ON du.pk_id_unidade = ft.fk_id_unidade
-GROUP BY du.pk_id_unidade, du.nome_unidade
+JOIN dim_unidade             du ON du.SK_unidade = ft.fk_SK_unidade
+GROUP BY du.SK_unidade, du.nome_unidade
 ORDER BY receita_realizada DESC;
 
 -- 6C: Alunos com bolsa vs sem bolsa — impacto na receita
 -- Responde: qual o custo financeiro das bolsas concedidas?
 SELECT
     CASE tem_bolsa WHEN 1 THEN 'Com bolsa' ELSE 'Sem bolsa' END AS perfil,
-    COUNT(DISTINCT fk_id_aluno) AS alunos,
+    COUNT(DISTINCT fk_SK_aluno) AS alunos,
     SUM(valor_liquido)          AS receita_liquida,
     SUM(valor_desconto)         AS total_descontos,
     SUM(valor_pago)             AS receita_realizada
@@ -324,10 +324,10 @@ SELECT
     SUM(CASE WHEN fda.nota_final >= 6 THEN 1 ELSE 0 END) AS aprovados,
     SUM(CASE WHEN fda.nota_final < 6  THEN 1 ELSE 0 END) AS reprovados
 FROM ft_desempenho_academico fda
-JOIN dim_materia              dm  ON dm.pk_id_materia = fda.fk_id_materia
-JOIN dim_curso                dc  ON dc.pk_id_curso   = fda.fk_id_curso
+JOIN dim_materia              dm  ON dm.SK_materia = fda.fk_SK_materia
+JOIN dim_curso                dc  ON dc.SK_curso   = fda.fk_SK_curso
 WHERE fda.nota_final IS NOT NULL
-GROUP BY dm.pk_id_materia, dc.pk_id_curso
+GROUP BY dm.SK_materia, dc.SK_curso
 ORDER BY nota_media ASC;
 
 -- 6E: Custo total de folha por mes e por departamento
@@ -336,16 +336,16 @@ SELECT
     dt.nome_mes,
     dt.ano,
     df.nome_departamento,
-    COUNT(DISTINCT ff.fk_id_funcionario)  AS funcionarios,
+    COUNT(DISTINCT ff.fk_SK_funcionario)  AS funcionarios,
     SUM(ff.salario_bruto)                 AS total_bruto,
     SUM(ff.total_proventos)               AS total_proventos,
     SUM(ff.total_descontos)               AS total_descontos,
     SUM(ff.salario_liquido)               AS total_liquido
 FROM ft_folha_rh      ff
-JOIN dim_tempo        dt ON dt.pk_id_tempo        = ff.fk_id_tempo
-JOIN dim_funcionario  df ON df.pk_id_funcionario  = ff.fk_id_funcionario
-GROUP BY dt.pk_id_tempo, df.nome_departamento
-ORDER BY dt.pk_id_tempo, total_bruto DESC;
+JOIN dim_tempo        dt ON dt.SK_tempo        = ff.fk_SK_tempo
+JOIN dim_funcionario  df ON df.SK_funcionario  = ff.fk_SK_funcionario
+GROUP BY dt.SK_tempo, df.nome_departamento
+ORDER BY dt.SK_tempo, total_bruto DESC;
 
 -- 6F: Movimentacao de RH — headcount e admissoes por periodo
 -- Responde: em qual mes contratamos mais? Qual e o tempo medio de empresa?
@@ -357,6 +357,6 @@ SELECT
     ROUND(AVG(CASE WHEN fm.tipo_movimentacao = 'Desligamento'
                    THEN fm.dias_empresa END), 0)                           AS tempo_medio_dias
 FROM ft_movimentacao_rh fm
-JOIN dim_tempo          dt ON dt.pk_id_tempo = fm.fk_id_tempo
-GROUP BY dt.pk_id_tempo
-ORDER BY dt.pk_id_tempo;
+JOIN dim_tempo          dt ON dt.SK_tempo = fm.fk_SK_tempo
+GROUP BY dt.SK_tempo
+ORDER BY dt.SK_tempo;

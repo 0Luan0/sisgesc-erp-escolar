@@ -2467,13 +2467,13 @@ USE erp_escolar_olap;
 -- Sem surrogate: o proprio valor identifica univocamente o periodo
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dim_tempo (
-  pk_id_tempo  INT         NOT NULL COMMENT 'YYYYMM — chave natural do periodo',
+  SK_tempo  INT         NOT NULL COMMENT 'YYYYMM — chave natural do periodo',
   ano          YEAR        NOT NULL,
   mes          TINYINT     NOT NULL,
   nome_mes     VARCHAR(20) NOT NULL,
   trimestre    TINYINT     NOT NULL,
   semestre     TINYINT     NOT NULL,
-  PRIMARY KEY (pk_id_tempo),
+  PRIMARY KEY (SK_tempo),
   CONSTRAINT chk_dt_mes  CHECK (mes BETWEEN 1 AND 12),
   CONSTRAINT chk_dt_trim CHECK (trimestre BETWEEN 1 AND 4),
   CONSTRAINT chk_dt_sem  CHECK (semestre BETWEEN 1 AND 2)
@@ -2485,12 +2485,12 @@ CREATE TABLE IF NOT EXISTS dim_tempo (
 -- usa surrogate para isolar do OLTP e permitir SCD futura
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dim_aluno (
-  pk_id_aluno   INT          NOT NULL AUTO_INCREMENT,
+  SK_aluno   INT          NOT NULL AUTO_INCREMENT,
   rga           CHAR(8)      NOT NULL,
   nome_completo VARCHAR(202) NOT NULL,
   ano_ingresso  YEAR         NOT NULL,
   curso_ingresso CHAR(3)     NOT NULL COMMENT 'curso no momento da matricula (snapshot)',
-  PRIMARY KEY (pk_id_aluno),
+  PRIMARY KEY (SK_aluno),
   UNIQUE KEY uq_da_rga (rga)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2500,11 +2500,11 @@ CREATE TABLE IF NOT EXISTS dim_aluno (
 -- mas star schema padroniza surrogate em todas as dims
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dim_curso (
-  pk_id_curso   INT         NOT NULL AUTO_INCREMENT,
+  SK_curso   INT         NOT NULL AUTO_INCREMENT,
   codigo_curso  CHAR(3)     NOT NULL,
   nome_curso    VARCHAR(100) NOT NULL,
   nivel_ensino  VARCHAR(30) NOT NULL,
-  PRIMARY KEY (pk_id_curso),
+  PRIMARY KEY (SK_curso),
   UNIQUE KEY uq_dc_codigo (codigo_curso)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2515,9 +2515,9 @@ CREATE TABLE IF NOT EXISTS dim_curso (
 -- Surrogate: sem chave natural clara no OLTP (nao ha tabela unidade)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dim_unidade (
-  pk_id_unidade INT         NOT NULL AUTO_INCREMENT,
+  SK_unidade INT         NOT NULL AUTO_INCREMENT,
   nome_unidade  VARCHAR(60) NOT NULL,
-  PRIMARY KEY (pk_id_unidade),
+  PRIMARY KEY (SK_unidade),
   UNIQUE KEY uq_du_nome (nome_unidade)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2529,10 +2529,10 @@ CREATE TABLE IF NOT EXISTS dim_unidade (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ft_receita_mensalidade (
   pk_id_fato      INT            NOT NULL AUTO_INCREMENT,
-  fk_id_tempo     INT            NOT NULL,
-  fk_id_aluno     INT            NOT NULL,
-  fk_id_curso     INT            NOT NULL,
-  fk_id_unidade   INT            NOT NULL,
+  fk_SK_tempo     INT            NOT NULL,
+  fk_SK_aluno     INT            NOT NULL,
+  fk_SK_curso     INT            NOT NULL,
+  fk_SK_unidade   INT            NOT NULL,
   -- metricas financeiras (snapshot do momento da geracao da mensalidade)
   valor_base      DECIMAL(10,2)  NOT NULL,
   valor_desconto  DECIMAL(10,2)  NOT NULL DEFAULT 0.00,
@@ -2542,10 +2542,10 @@ CREATE TABLE IF NOT EXISTS ft_receita_mensalidade (
   status_mensalidade VARCHAR(10) NOT NULL,
   tem_bolsa       TINYINT(1)     NOT NULL DEFAULT 0,
   PRIMARY KEY (pk_id_fato),
-  CONSTRAINT fk_ft_tempo    FOREIGN KEY (fk_id_tempo)   REFERENCES dim_tempo(pk_id_tempo),
-  CONSTRAINT fk_ft_aluno    FOREIGN KEY (fk_id_aluno)   REFERENCES dim_aluno(pk_id_aluno),
-  CONSTRAINT fk_ft_curso    FOREIGN KEY (fk_id_curso)   REFERENCES dim_curso(pk_id_curso),
-  CONSTRAINT fk_ft_unidade  FOREIGN KEY (fk_id_unidade) REFERENCES dim_unidade(pk_id_unidade)
+  CONSTRAINT fk_ft_tempo    FOREIGN KEY (fk_SK_tempo)   REFERENCES dim_tempo(SK_tempo),
+  CONSTRAINT fk_ft_aluno    FOREIGN KEY (fk_SK_aluno)   REFERENCES dim_aluno(SK_aluno),
+  CONSTRAINT fk_ft_curso    FOREIGN KEY (fk_SK_curso)   REFERENCES dim_curso(SK_curso),
+  CONSTRAINT fk_ft_unidade  FOREIGN KEY (fk_SK_unidade) REFERENCES dim_unidade(SK_unidade)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -2553,11 +2553,11 @@ CREATE TABLE IF NOT EXISTS ft_receita_mensalidade (
 -- Surrogate: star schema padroniza surrogate em todas as dims
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dim_materia (
-  pk_id_materia  INT         NOT NULL AUTO_INCREMENT,
+  SK_materia  INT         NOT NULL AUTO_INCREMENT,
   codigo_materia CHAR(5)     NOT NULL,
   nome_materia   VARCHAR(60) NOT NULL,
   carga_horaria  INT         NOT NULL,
-  PRIMARY KEY (pk_id_materia),
+  PRIMARY KEY (SK_materia),
   UNIQUE KEY uq_dm_codigo (codigo_materia)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2567,7 +2567,7 @@ CREATE TABLE IF NOT EXISTS dim_materia (
 -- Snapshot dos atributos descritivos no momento da carga
 -- ============================================================
 CREATE TABLE IF NOT EXISTS dim_funcionario (
-  pk_id_funcionario INT          NOT NULL AUTO_INCREMENT,
+  SK_funcionario INT          NOT NULL AUTO_INCREMENT,
   rgf               CHAR(5)      NOT NULL,
   nome_completo     VARCHAR(101) NOT NULL,
   codigo_cargo      CHAR(3)      NOT NULL,
@@ -2575,7 +2575,7 @@ CREATE TABLE IF NOT EXISTS dim_funcionario (
   nome_departamento VARCHAR(100) NOT NULL,
   nivel_cargo       VARCHAR(10)  NOT NULL,
   data_admissao     DATE         NOT NULL,
-  PRIMARY KEY (pk_id_funcionario),
+  PRIMARY KEY (SK_funcionario),
   UNIQUE KEY uq_df_rgf (rgf)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2587,9 +2587,9 @@ CREATE TABLE IF NOT EXISTS dim_funcionario (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ft_desempenho_academico (
   pk_id_fato          INT            NOT NULL AUTO_INCREMENT,
-  fk_id_aluno         INT            NOT NULL,
-  fk_id_curso         INT            NOT NULL,
-  fk_id_materia       INT            NOT NULL,
+  fk_SK_aluno         INT            NOT NULL,
+  fk_SK_curso         INT            NOT NULL,
+  fk_SK_materia       INT            NOT NULL,
   ano_letivo          YEAR           NOT NULL,
   semestre_letivo     TINYINT        NOT NULL COMMENT '1 ou 2',
   -- metricas academicas
@@ -2599,9 +2599,9 @@ CREATE TABLE IF NOT EXISTS ft_desempenho_academico (
   percentual_presenca DECIMAL(5,2)   NOT NULL DEFAULT 0.00,
   status_turma        VARCHAR(20)    NOT NULL,
   PRIMARY KEY (pk_id_fato),
-  CONSTRAINT fk_fda_aluno   FOREIGN KEY (fk_id_aluno)   REFERENCES dim_aluno(pk_id_aluno),
-  CONSTRAINT fk_fda_curso   FOREIGN KEY (fk_id_curso)   REFERENCES dim_curso(pk_id_curso),
-  CONSTRAINT fk_fda_materia FOREIGN KEY (fk_id_materia) REFERENCES dim_materia(pk_id_materia),
+  CONSTRAINT fk_fda_aluno   FOREIGN KEY (fk_SK_aluno)   REFERENCES dim_aluno(SK_aluno),
+  CONSTRAINT fk_fda_curso   FOREIGN KEY (fk_SK_curso)   REFERENCES dim_curso(SK_curso),
+  CONSTRAINT fk_fda_materia FOREIGN KEY (fk_SK_materia) REFERENCES dim_materia(SK_materia),
   CONSTRAINT chk_fda_sem    CHECK (semestre_letivo IN (1, 2))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -2614,8 +2614,8 @@ CREATE TABLE IF NOT EXISTS ft_desempenho_academico (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ft_folha_rh (
   pk_id_fato        INT            NOT NULL AUTO_INCREMENT,
-  fk_id_funcionario INT            NOT NULL,
-  fk_id_tempo       INT            NOT NULL,
+  fk_SK_funcionario INT            NOT NULL,
+  fk_SK_tempo       INT            NOT NULL,
   -- metricas (snapshot do mes processado)
   salario_bruto     DECIMAL(10,2)  NOT NULL,
   total_proventos   DECIMAL(10,2)  NOT NULL DEFAULT 0.00,
@@ -2623,8 +2623,8 @@ CREATE TABLE IF NOT EXISTS ft_folha_rh (
   salario_liquido   DECIMAL(10,2)  NOT NULL,
   status_folha      VARCHAR(20)    NOT NULL,
   PRIMARY KEY (pk_id_fato),
-  CONSTRAINT fk_ffr_func  FOREIGN KEY (fk_id_funcionario) REFERENCES dim_funcionario(pk_id_funcionario),
-  CONSTRAINT fk_ffr_tempo FOREIGN KEY (fk_id_tempo)       REFERENCES dim_tempo(pk_id_tempo)
+  CONSTRAINT fk_ffr_func  FOREIGN KEY (fk_SK_funcionario) REFERENCES dim_funcionario(SK_funcionario),
+  CONSTRAINT fk_ffr_tempo FOREIGN KEY (fk_SK_tempo)       REFERENCES dim_tempo(SK_tempo)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ============================================================
@@ -2634,14 +2634,14 @@ CREATE TABLE IF NOT EXISTS ft_folha_rh (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS ft_movimentacao_rh (
   pk_id_fato        INT          NOT NULL AUTO_INCREMENT,
-  fk_id_funcionario INT          NOT NULL,
-  fk_id_tempo       INT          NOT NULL COMMENT 'mes do evento (YYYYMM)',
+  fk_SK_funcionario INT          NOT NULL,
+  fk_SK_tempo       INT          NOT NULL COMMENT 'mes do evento (YYYYMM)',
   tipo_movimentacao VARCHAR(20)  NOT NULL COMMENT 'Admissao | Desligamento',
   dias_empresa      INT          NOT NULL DEFAULT 0 COMMENT '0 na admissao; DATEDIFF na saida',
   data_evento       DATE         NOT NULL,
   PRIMARY KEY (pk_id_fato),
-  CONSTRAINT fk_fmr_func  FOREIGN KEY (fk_id_funcionario) REFERENCES dim_funcionario(pk_id_funcionario),
-  CONSTRAINT fk_fmr_tempo FOREIGN KEY (fk_id_tempo)       REFERENCES dim_tempo(pk_id_tempo),
+  CONSTRAINT fk_fmr_func  FOREIGN KEY (fk_SK_funcionario) REFERENCES dim_funcionario(SK_funcionario),
+  CONSTRAINT fk_fmr_tempo FOREIGN KEY (fk_SK_tempo)       REFERENCES dim_tempo(SK_tempo),
   CONSTRAINT chk_fmr_tipo CHECK (tipo_movimentacao IN ('Admissao', 'Desligamento'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 -- ============================================================
@@ -2675,9 +2675,9 @@ SET FOREIGN_KEY_CHECKS = 1;
 --   mensalidade (receita), folha_pagamentos (RH) e datas de
 --   admissao/desligamento (movimentacao de pessoal)
 -- ============================================================
-INSERT INTO erp_escolar_olap.dim_tempo (pk_id_tempo, ano, mes, nome_mes, trimestre, semestre)
+INSERT INTO erp_escolar_olap.dim_tempo (SK_tempo, ano, mes, nome_mes, trimestre, semestre)
 SELECT DISTINCT
-    p.periodo_num                                                     AS pk_id_tempo,
+    p.periodo_num                                                     AS SK_tempo,
     CAST(LEFT(p.periodo_num, 4) AS UNSIGNED)                          AS ano,
     CAST(RIGHT(p.periodo_num, 2) AS UNSIGNED)                         AS mes,
     ELT(CAST(RIGHT(p.periodo_num, 2) AS UNSIGNED),
@@ -2744,21 +2744,21 @@ ORDER BY a.rga;
 -- dim_unidade: mapeamento curso → area via CASE
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_receita_mensalidade
-    (fk_id_tempo, fk_id_aluno, fk_id_curso, fk_id_unidade,
+    (fk_SK_tempo, fk_SK_aluno, fk_SK_curso, fk_SK_unidade,
      valor_base, valor_desconto, valor_liquido, valor_pago,
      status_mensalidade, tem_bolsa)
 SELECT
     -- dim_tempo: chave YYYYMM
-    CAST(REPLACE(ms.periodo, '-', '') AS UNSIGNED)            AS fk_id_tempo,
+    CAST(REPLACE(ms.periodo, '-', '') AS UNSIGNED)            AS fk_SK_tempo,
 
     -- dim_aluno: surrogate via lookup
-    da.pk_id_aluno                                            AS fk_id_aluno,
+    da.SK_aluno                                            AS fk_SK_aluno,
 
     -- dim_curso: surrogate via lookup
-    dc.pk_id_curso                                            AS fk_id_curso,
+    dc.SK_curso                                            AS fk_SK_curso,
 
     -- dim_unidade: derivada do curso (nao existe FK direta no OLTP)
-    du.pk_id_unidade                                          AS fk_id_unidade,
+    du.SK_unidade                                          AS fk_SK_unidade,
 
     -- metricas
     ms.valor_base,
@@ -2829,12 +2829,12 @@ ORDER BY f.rgf;
 -- avaliacao/nota e frequencia quando ambas tem N linhas por turma
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_desempenho_academico
-    (fk_id_aluno, fk_id_curso, fk_id_materia, ano_letivo, semestre_letivo,
+    (fk_SK_aluno, fk_SK_curso, fk_SK_materia, ano_letivo, semestre_letivo,
      nota_final, total_aulas, total_presencas, percentual_presenca, status_turma)
 SELECT
-    da.pk_id_aluno,
-    dc.pk_id_curso,
-    dm.pk_id_materia,
+    da.SK_aluno,
+    dc.SK_curso,
+    dm.SK_materia,
     ca.ano,
     ca.semestre,
     notas.nota_final,
@@ -2876,7 +2876,7 @@ LEFT JOIN (
     GROUP BY fk_id_matricula, fk_id_turma
 ) freq ON freq.fk_id_matricula = mt.fk_id_matricula
       AND freq.fk_id_turma     = mt.fk_id_turma
-ORDER BY ca.ano, ca.semestre, da.pk_id_aluno;
+ORDER BY ca.ano, ca.semestre, da.SK_aluno;
 
 -- ============================================================
 -- STEP 9: ft_folha_rh
@@ -2884,11 +2884,11 @@ ORDER BY ca.ano, ca.semestre, da.pk_id_aluno;
 -- salario_liquido = bruto + proventos - descontos (snapshot OLAP)
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_folha_rh
-    (fk_id_funcionario, fk_id_tempo, salario_bruto,
+    (fk_SK_funcionario, fk_SK_tempo, salario_bruto,
      total_proventos, total_descontos, salario_liquido, status_folha)
 SELECT
-    df.pk_id_funcionario,
-    CAST(REPLACE(fp.periodo, '-', '') AS UNSIGNED)                                          AS fk_id_tempo,
+    df.SK_funcionario,
+    CAST(REPLACE(fp.periodo, '-', '') AS UNSIGNED)                                          AS fk_SK_tempo,
     fp.salario_bruto,
     COALESCE(SUM(CASE WHEN ef.tipo = 'Provento' THEN fe.valor ELSE 0 END), 0)              AS total_proventos,
     COALESCE(SUM(CASE WHEN ef.tipo = 'Desconto' THEN fe.valor ELSE 0 END), 0)              AS total_descontos,
@@ -2901,7 +2901,7 @@ JOIN erp_escolar_olap.dim_funcionario            df  ON df.rgf        = fp.fk_rg
 LEFT JOIN erp_escolar.folha_evento               fe  ON fe.fk_rgf     = fp.fk_rgf
                                                     AND fe.periodo    = fp.periodo
 LEFT JOIN erp_escolar.evento_folha               ef  ON ef.nome_evento = fe.nome_evento
-GROUP BY df.pk_id_funcionario, fp.fk_rgf, fp.periodo, fp.salario_bruto, fp.status
+GROUP BY df.SK_funcionario, fp.fk_rgf, fp.periodo, fp.salario_bruto, fp.status
 ORDER BY fp.periodo, fp.fk_rgf;
 
 -- ============================================================
@@ -2910,10 +2910,10 @@ ORDER BY fp.periodo, fp.fk_rgf;
 -- Permite calculo de headcount, tempo medio de empresa, turnover
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_movimentacao_rh
-    (fk_id_funcionario, fk_id_tempo, tipo_movimentacao, dias_empresa, data_evento)
+    (fk_SK_funcionario, fk_SK_tempo, tipo_movimentacao, dias_empresa, data_evento)
 SELECT
-    df.pk_id_funcionario,
-    CAST(DATE_FORMAT(f.data_admissao, '%Y%m') AS UNSIGNED) AS fk_id_tempo,
+    df.SK_funcionario,
+    CAST(DATE_FORMAT(f.data_admissao, '%Y%m') AS UNSIGNED) AS fk_SK_tempo,
     'Admissao'                                             AS tipo_movimentacao,
     0                                                      AS dias_empresa,
     f.data_admissao                                        AS data_evento
@@ -2923,8 +2923,8 @@ JOIN erp_escolar_olap.dim_funcionario df ON df.rgf = f.rgf
 UNION ALL
 
 SELECT
-    df.pk_id_funcionario,
-    CAST(DATE_FORMAT(f.data_desligamento, '%Y%m') AS UNSIGNED) AS fk_id_tempo,
+    df.SK_funcionario,
+    CAST(DATE_FORMAT(f.data_desligamento, '%Y%m') AS UNSIGNED) AS fk_SK_tempo,
     'Desligamento'                                              AS tipo_movimentacao,
     DATEDIFF(f.data_desligamento, f.data_admissao)              AS dias_empresa,
     f.data_desligamento                                         AS data_evento
@@ -3040,8 +3040,8 @@ JOIN (
         CONCAT(dt.ano, '-', LPAD(dt.mes, 2, '0')) AS periodo,
         SUM(ft.valor_pago)                         AS soma_olap
     FROM erp_escolar_olap.ft_receita_mensalidade ft
-    JOIN erp_escolar_olap.dim_tempo dt ON dt.pk_id_tempo = ft.fk_id_tempo
-    GROUP BY dt.pk_id_tempo
+    JOIN erp_escolar_olap.dim_tempo dt ON dt.SK_tempo = ft.fk_SK_tempo
+    GROUP BY dt.SK_tempo
 ) olap ON oltp.periodo = olap.periodo
 ORDER BY oltp.periodo;
 
@@ -3072,7 +3072,7 @@ JOIN (
         dc.codigo_curso,
         SUM(ft.valor_pago) AS soma_olap
     FROM erp_escolar_olap.ft_receita_mensalidade ft
-    JOIN erp_escolar_olap.dim_curso dc ON dc.pk_id_curso = ft.fk_id_curso
+    JOIN erp_escolar_olap.dim_curso dc ON dc.SK_curso = ft.fk_SK_curso
     GROUP BY dc.codigo_curso
 ) olap ON oltp.codigo_curso = olap.codigo_curso
 ORDER BY oltp.codigo_curso;
@@ -3142,10 +3142,10 @@ CREATE INDEX idx_frequencia_matricula_turma
 -- OLAP — ft_receita_mensalidade
 -- queries analiticas filtram e agrupam por tempo e curso com frequencia
 CREATE INDEX idx_ft_tempo
-    ON erp_escolar_olap.ft_receita_mensalidade (fk_id_tempo);
+    ON erp_escolar_olap.ft_receita_mensalidade (fk_SK_tempo);
 
 CREATE INDEX idx_ft_curso_tempo
-    ON erp_escolar_olap.ft_receita_mensalidade (fk_id_curso, fk_id_tempo);
+    ON erp_escolar_olap.ft_receita_mensalidade (fk_SK_curso, fk_SK_tempo);
 
 CREATE INDEX idx_ft_status
     ON erp_escolar_olap.ft_receita_mensalidade (status_mensalidade);
@@ -3153,23 +3153,23 @@ CREATE INDEX idx_ft_status
 -- OLAP — ft_desempenho_academico
 -- filtros mais comuns: aluno, materia, semestre
 CREATE INDEX idx_fda_aluno_materia
-    ON erp_escolar_olap.ft_desempenho_academico (fk_id_aluno, fk_id_materia);
+    ON erp_escolar_olap.ft_desempenho_academico (fk_SK_aluno, fk_SK_materia);
 
 CREATE INDEX idx_fda_curso_ano
-    ON erp_escolar_olap.ft_desempenho_academico (fk_id_curso, ano_letivo, semestre_letivo);
+    ON erp_escolar_olap.ft_desempenho_academico (fk_SK_curso, ano_letivo, semestre_letivo);
 
 -- OLAP — ft_folha_rh
 -- filtros por tempo (mes) e funcionario para relatorios de folha
 CREATE INDEX idx_ffr_tempo
-    ON erp_escolar_olap.ft_folha_rh (fk_id_tempo);
+    ON erp_escolar_olap.ft_folha_rh (fk_SK_tempo);
 
 CREATE INDEX idx_ffr_funcionario
-    ON erp_escolar_olap.ft_folha_rh (fk_id_funcionario);
+    ON erp_escolar_olap.ft_folha_rh (fk_SK_funcionario);
 
 -- OLAP — ft_movimentacao_rh
 -- filtros por tipo de evento e periodo para analise de turnover
 CREATE INDEX idx_fmr_tipo_tempo
-    ON erp_escolar_olap.ft_movimentacao_rh (tipo_movimentacao, fk_id_tempo);
+    ON erp_escolar_olap.ft_movimentacao_rh (tipo_movimentacao, fk_SK_tempo);
 
 -- ============================================================
 -- PARTE 4: EXPLAIN DEPOIS DOS INDICES
@@ -3258,27 +3258,27 @@ SELECT
     SUM(ft.valor_pago)                                   AS receita_realizada,
     ROUND(SUM(ft.valor_pago) / SUM(ft.valor_liquido) * 100, 1) AS taxa_pagamento_pct
 FROM ft_receita_mensalidade ft
-JOIN dim_tempo              dt ON dt.pk_id_tempo = ft.fk_id_tempo
-GROUP BY dt.pk_id_tempo, dt.nome_mes, dt.ano
-ORDER BY dt.pk_id_tempo;
+JOIN dim_tempo              dt ON dt.SK_tempo = ft.fk_SK_tempo
+GROUP BY dt.SK_tempo, dt.nome_mes, dt.ano
+ORDER BY dt.SK_tempo;
 
 -- 6B: Faturamento por unidade academica
 -- Responde: qual area gera mais receita?
 SELECT
     du.nome_unidade,
-    COUNT(DISTINCT ft.fk_id_aluno)  AS alunos,
+    COUNT(DISTINCT ft.fk_SK_aluno)  AS alunos,
     SUM(ft.valor_liquido)           AS receita_esperada,
     SUM(ft.valor_pago)              AS receita_realizada
 FROM ft_receita_mensalidade ft
-JOIN dim_unidade             du ON du.pk_id_unidade = ft.fk_id_unidade
-GROUP BY du.pk_id_unidade, du.nome_unidade
+JOIN dim_unidade             du ON du.SK_unidade = ft.fk_SK_unidade
+GROUP BY du.SK_unidade, du.nome_unidade
 ORDER BY receita_realizada DESC;
 
 -- 6C: Alunos com bolsa vs sem bolsa — impacto na receita
 -- Responde: qual o custo financeiro das bolsas concedidas?
 SELECT
     CASE tem_bolsa WHEN 1 THEN 'Com bolsa' ELSE 'Sem bolsa' END AS perfil,
-    COUNT(DISTINCT fk_id_aluno) AS alunos,
+    COUNT(DISTINCT fk_SK_aluno) AS alunos,
     SUM(valor_liquido)          AS receita_liquida,
     SUM(valor_desconto)         AS total_descontos,
     SUM(valor_pago)             AS receita_realizada
@@ -3299,10 +3299,10 @@ SELECT
     SUM(CASE WHEN fda.nota_final >= 6 THEN 1 ELSE 0 END) AS aprovados,
     SUM(CASE WHEN fda.nota_final < 6  THEN 1 ELSE 0 END) AS reprovados
 FROM ft_desempenho_academico fda
-JOIN dim_materia              dm  ON dm.pk_id_materia = fda.fk_id_materia
-JOIN dim_curso                dc  ON dc.pk_id_curso   = fda.fk_id_curso
+JOIN dim_materia              dm  ON dm.SK_materia = fda.fk_SK_materia
+JOIN dim_curso                dc  ON dc.SK_curso   = fda.fk_SK_curso
 WHERE fda.nota_final IS NOT NULL
-GROUP BY dm.pk_id_materia, dc.pk_id_curso
+GROUP BY dm.SK_materia, dc.SK_curso
 ORDER BY nota_media ASC;
 
 -- 6E: Custo total de folha por mes e por departamento
@@ -3311,16 +3311,16 @@ SELECT
     dt.nome_mes,
     dt.ano,
     df.nome_departamento,
-    COUNT(DISTINCT ff.fk_id_funcionario)  AS funcionarios,
+    COUNT(DISTINCT ff.fk_SK_funcionario)  AS funcionarios,
     SUM(ff.salario_bruto)                 AS total_bruto,
     SUM(ff.total_proventos)               AS total_proventos,
     SUM(ff.total_descontos)               AS total_descontos,
     SUM(ff.salario_liquido)               AS total_liquido
 FROM ft_folha_rh      ff
-JOIN dim_tempo        dt ON dt.pk_id_tempo        = ff.fk_id_tempo
-JOIN dim_funcionario  df ON df.pk_id_funcionario  = ff.fk_id_funcionario
-GROUP BY dt.pk_id_tempo, df.nome_departamento
-ORDER BY dt.pk_id_tempo, total_bruto DESC;
+JOIN dim_tempo        dt ON dt.SK_tempo        = ff.fk_SK_tempo
+JOIN dim_funcionario  df ON df.SK_funcionario  = ff.fk_SK_funcionario
+GROUP BY dt.SK_tempo, df.nome_departamento
+ORDER BY dt.SK_tempo, total_bruto DESC;
 
 -- 6F: Movimentacao de RH — headcount e admissoes por periodo
 -- Responde: em qual mes contratamos mais? Qual e o tempo medio de empresa?
@@ -3332,6 +3332,6 @@ SELECT
     ROUND(AVG(CASE WHEN fm.tipo_movimentacao = 'Desligamento'
                    THEN fm.dias_empresa END), 0)                           AS tempo_medio_dias
 FROM ft_movimentacao_rh fm
-JOIN dim_tempo          dt ON dt.pk_id_tempo = fm.fk_id_tempo
-GROUP BY dt.pk_id_tempo
-ORDER BY dt.pk_id_tempo;
+JOIN dim_tempo          dt ON dt.SK_tempo = fm.fk_SK_tempo
+GROUP BY dt.SK_tempo
+ORDER BY dt.SK_tempo;

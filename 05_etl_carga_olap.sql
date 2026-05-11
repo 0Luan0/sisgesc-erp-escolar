@@ -29,9 +29,9 @@ SET FOREIGN_KEY_CHECKS = 1;
 --   mensalidade (receita), folha_pagamentos (RH) e datas de
 --   admissao/desligamento (movimentacao de pessoal)
 -- ============================================================
-INSERT INTO erp_escolar_olap.dim_tempo (pk_id_tempo, ano, mes, nome_mes, trimestre, semestre)
+INSERT INTO erp_escolar_olap.dim_tempo (SK_tempo, ano, mes, nome_mes, trimestre, semestre)
 SELECT DISTINCT
-    p.periodo_num                                                     AS pk_id_tempo,
+    p.periodo_num                                                     AS SK_tempo,
     CAST(LEFT(p.periodo_num, 4) AS UNSIGNED)                          AS ano,
     CAST(RIGHT(p.periodo_num, 2) AS UNSIGNED)                         AS mes,
     ELT(CAST(RIGHT(p.periodo_num, 2) AS UNSIGNED),
@@ -98,21 +98,21 @@ ORDER BY a.rga;
 -- dim_unidade: mapeamento curso → area via CASE
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_receita_mensalidade
-    (fk_id_tempo, fk_id_aluno, fk_id_curso, fk_id_unidade,
+    (fk_SK_tempo, fk_SK_aluno, fk_SK_curso, fk_SK_unidade,
      valor_base, valor_desconto, valor_liquido, valor_pago,
      status_mensalidade, tem_bolsa)
 SELECT
     -- dim_tempo: chave YYYYMM
-    CAST(REPLACE(ms.periodo, '-', '') AS UNSIGNED)            AS fk_id_tempo,
+    CAST(REPLACE(ms.periodo, '-', '') AS UNSIGNED)            AS fk_SK_tempo,
 
     -- dim_aluno: surrogate via lookup
-    da.pk_id_aluno                                            AS fk_id_aluno,
+    da.SK_aluno                                            AS fk_SK_aluno,
 
     -- dim_curso: surrogate via lookup
-    dc.pk_id_curso                                            AS fk_id_curso,
+    dc.SK_curso                                            AS fk_SK_curso,
 
     -- dim_unidade: derivada do curso (nao existe FK direta no OLTP)
-    du.pk_id_unidade                                          AS fk_id_unidade,
+    du.SK_unidade                                          AS fk_SK_unidade,
 
     -- metricas
     ms.valor_base,
@@ -183,12 +183,12 @@ ORDER BY f.rgf;
 -- avaliacao/nota e frequencia quando ambas tem N linhas por turma
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_desempenho_academico
-    (fk_id_aluno, fk_id_curso, fk_id_materia, ano_letivo, semestre_letivo,
+    (fk_SK_aluno, fk_SK_curso, fk_SK_materia, ano_letivo, semestre_letivo,
      nota_final, total_aulas, total_presencas, percentual_presenca, status_turma)
 SELECT
-    da.pk_id_aluno,
-    dc.pk_id_curso,
-    dm.pk_id_materia,
+    da.SK_aluno,
+    dc.SK_curso,
+    dm.SK_materia,
     ca.ano,
     ca.semestre,
     notas.nota_final,
@@ -230,7 +230,7 @@ LEFT JOIN (
     GROUP BY fk_id_matricula, fk_id_turma
 ) freq ON freq.fk_id_matricula = mt.fk_id_matricula
       AND freq.fk_id_turma     = mt.fk_id_turma
-ORDER BY ca.ano, ca.semestre, da.pk_id_aluno;
+ORDER BY ca.ano, ca.semestre, da.SK_aluno;
 
 -- ============================================================
 -- STEP 9: ft_folha_rh
@@ -238,11 +238,11 @@ ORDER BY ca.ano, ca.semestre, da.pk_id_aluno;
 -- salario_liquido = bruto + proventos - descontos (snapshot OLAP)
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_folha_rh
-    (fk_id_funcionario, fk_id_tempo, salario_bruto,
+    (fk_SK_funcionario, fk_SK_tempo, salario_bruto,
      total_proventos, total_descontos, salario_liquido, status_folha)
 SELECT
-    df.pk_id_funcionario,
-    CAST(REPLACE(fp.periodo, '-', '') AS UNSIGNED)                                          AS fk_id_tempo,
+    df.SK_funcionario,
+    CAST(REPLACE(fp.periodo, '-', '') AS UNSIGNED)                                          AS fk_SK_tempo,
     fp.salario_bruto,
     COALESCE(SUM(CASE WHEN ef.tipo = 'Provento' THEN fe.valor ELSE 0 END), 0)              AS total_proventos,
     COALESCE(SUM(CASE WHEN ef.tipo = 'Desconto' THEN fe.valor ELSE 0 END), 0)              AS total_descontos,
@@ -255,7 +255,7 @@ JOIN erp_escolar_olap.dim_funcionario            df  ON df.rgf        = fp.fk_rg
 LEFT JOIN erp_escolar.folha_evento               fe  ON fe.fk_rgf     = fp.fk_rgf
                                                     AND fe.periodo    = fp.periodo
 LEFT JOIN erp_escolar.evento_folha               ef  ON ef.nome_evento = fe.nome_evento
-GROUP BY df.pk_id_funcionario, fp.fk_rgf, fp.periodo, fp.salario_bruto, fp.status
+GROUP BY df.SK_funcionario, fp.fk_rgf, fp.periodo, fp.salario_bruto, fp.status
 ORDER BY fp.periodo, fp.fk_rgf;
 
 -- ============================================================
@@ -264,10 +264,10 @@ ORDER BY fp.periodo, fp.fk_rgf;
 -- Permite calculo de headcount, tempo medio de empresa, turnover
 -- ============================================================
 INSERT INTO erp_escolar_olap.ft_movimentacao_rh
-    (fk_id_funcionario, fk_id_tempo, tipo_movimentacao, dias_empresa, data_evento)
+    (fk_SK_funcionario, fk_SK_tempo, tipo_movimentacao, dias_empresa, data_evento)
 SELECT
-    df.pk_id_funcionario,
-    CAST(DATE_FORMAT(f.data_admissao, '%Y%m') AS UNSIGNED) AS fk_id_tempo,
+    df.SK_funcionario,
+    CAST(DATE_FORMAT(f.data_admissao, '%Y%m') AS UNSIGNED) AS fk_SK_tempo,
     'Admissao'                                             AS tipo_movimentacao,
     0                                                      AS dias_empresa,
     f.data_admissao                                        AS data_evento
@@ -277,8 +277,8 @@ JOIN erp_escolar_olap.dim_funcionario df ON df.rgf = f.rgf
 UNION ALL
 
 SELECT
-    df.pk_id_funcionario,
-    CAST(DATE_FORMAT(f.data_desligamento, '%Y%m') AS UNSIGNED) AS fk_id_tempo,
+    df.SK_funcionario,
+    CAST(DATE_FORMAT(f.data_desligamento, '%Y%m') AS UNSIGNED) AS fk_SK_tempo,
     'Desligamento'                                              AS tipo_movimentacao,
     DATEDIFF(f.data_desligamento, f.data_admissao)              AS dias_empresa,
     f.data_desligamento                                         AS data_evento

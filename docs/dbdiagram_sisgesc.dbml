@@ -492,7 +492,7 @@ Table abono_ferias {
 
 // PK natural YYYYMM — valor identifica unicamente o período
 Table dim_tempo {
-  pk_id_tempo int         [primary key, note: 'YYYYMM ex: 202402']
+  SK_tempo int         [primary key, note: 'YYYYMM ex: 202402']
   ano         year        [not null]
   mes         tinyint     [not null]
   nome_mes    varchar(20) [not null]
@@ -502,7 +502,7 @@ Table dim_tempo {
 
 // PK surrogate — isolamento do OLTP, suporta SCD futura
 Table dim_aluno {
-  pk_id_aluno    int          [primary key, increment]
+  SK_aluno    int          [primary key, increment]
   rga            char(8)      [unique]
   nome_completo  varchar(202) [not null]
   ano_ingresso   year         [not null]
@@ -511,7 +511,7 @@ Table dim_aluno {
 
 // PK surrogate
 Table dim_curso {
-  pk_id_curso  int          [primary key, increment]
+  SK_curso  int          [primary key, increment]
   codigo_curso char(3)      [unique]
   nome_curso   varchar(100) [not null]
   nivel_ensino varchar(30)  [not null]
@@ -520,13 +520,13 @@ Table dim_curso {
 // PK surrogate — não existe no OLTP, derivada no ETL
 // Mapeamento: ADS→TI, ENF→Saúde, LOG→Gestão
 Table dim_unidade {
-  pk_id_unidade int         [primary key, increment]
+  SK_unidade int         [primary key, increment]
   nome_unidade  varchar(60) [unique, not null]
 }
 
 // PK surrogate
 Table dim_materia {
-  pk_id_materia  int         [primary key, increment]
+  SK_materia  int         [primary key, increment]
   codigo_materia char(5)     [unique, not null]
   nome_materia   varchar(60) [not null]
   carga_horaria  int         [not null]
@@ -534,7 +534,7 @@ Table dim_materia {
 
 // PK surrogate — snapshot dos atributos no momento da carga ETL
 Table dim_funcionario {
-  pk_id_funcionario int          [primary key, increment]
+  SK_funcionario int          [primary key, increment]
   rgf               char(5)      [unique, not null]
   nome_completo     varchar(101) [not null]
   codigo_cargo      char(3)      [not null]
@@ -548,10 +548,10 @@ Table dim_funcionario {
 // Métricas aditivas: valor_base, valor_desconto, valor_liquido, valor_pago
 Table ft_receita_mensalidade {
   pk_id_fato         int           [primary key, increment]
-  fk_id_tempo        int           [not null]
-  fk_id_aluno        int           [not null]
-  fk_id_curso        int           [not null]
-  fk_id_unidade      int           [not null]
+  fk_SK_tempo        int           [not null]
+  fk_SK_aluno        int           [not null]
+  fk_SK_curso        int           [not null]
+  fk_SK_unidade      int           [not null]
   valor_base         decimal(10,2) [not null]
   valor_desconto     decimal(10,2) [not null]
   valor_liquido      decimal(10,2) [not null]
@@ -564,9 +564,9 @@ Table ft_receita_mensalidade {
 // ano_letivo e semestre_letivo são degenerate dims (período semestral, não mensal)
 Table ft_desempenho_academico {
   pk_id_fato          int          [primary key, increment]
-  fk_id_aluno         int          [not null, ref: > dim_aluno.pk_id_aluno]
-  fk_id_curso         int          [not null, ref: > dim_curso.pk_id_curso]
-  fk_id_materia       int          [not null, ref: > dim_materia.pk_id_materia]
+  fk_SK_aluno         int          [not null, ref: > dim_aluno.SK_aluno]
+  fk_SK_curso         int          [not null, ref: > dim_curso.SK_curso]
+  fk_SK_materia       int          [not null, ref: > dim_materia.SK_materia]
   ano_letivo          year         [not null, note: 'degenerate dimension']
   semestre_letivo     tinyint      [not null, note: 'degenerate dimension']
   nota_final          decimal(4,2) [note: 'NULL se sem avaliação registrada']
@@ -580,8 +580,8 @@ Table ft_desempenho_academico {
 // salario_liquido é snapshot OLAP — não é campo derivado proibido (critério 4)
 Table ft_folha_rh {
   pk_id_fato        int           [primary key, increment]
-  fk_id_funcionario int           [not null, ref: > dim_funcionario.pk_id_funcionario]
-  fk_id_tempo       int           [not null, ref: > dim_tempo.pk_id_tempo]
+  fk_SK_funcionario int           [not null, ref: > dim_funcionario.SK_funcionario]
+  fk_SK_tempo       int           [not null, ref: > dim_tempo.SK_tempo]
   salario_bruto     decimal(10,2) [not null]
   total_proventos   decimal(10,2) [not null]
   total_descontos   decimal(10,2) [not null]
@@ -593,8 +593,8 @@ Table ft_folha_rh {
 // Permite análise de headcount, turnover e tempo médio de empresa
 Table ft_movimentacao_rh {
   pk_id_fato        int         [primary key, increment]
-  fk_id_funcionario int         [not null, ref: > dim_funcionario.pk_id_funcionario]
-  fk_id_tempo       int         [not null, ref: > dim_tempo.pk_id_tempo]
+  fk_SK_funcionario int         [not null, ref: > dim_funcionario.SK_funcionario]
+  fk_SK_tempo       int         [not null, ref: > dim_tempo.SK_tempo]
   tipo_movimentacao varchar(20) [not null, note: 'Admissao | Desligamento']
   dias_empresa      int         [not null, note: '0 na admissão; DATEDIFF na saída']
   data_evento       date        [not null]
@@ -697,7 +697,7 @@ Ref: periodo_aquisitivo.pk_id_periodo - abono_ferias.fk_id_periodo
 // REFERÊNCIAS — STAR SCHEMA OLAP
 // ============================================================
 
-Ref: dim_tempo.pk_id_tempo     < ft_receita_mensalidade.fk_id_tempo
-Ref: dim_aluno.pk_id_aluno     < ft_receita_mensalidade.fk_id_aluno
-Ref: dim_curso.pk_id_curso     < ft_receita_mensalidade.fk_id_curso
-Ref: dim_unidade.pk_id_unidade < ft_receita_mensalidade.fk_id_unidade
+Ref: dim_tempo.SK_tempo     < ft_receita_mensalidade.fk_SK_tempo
+Ref: dim_aluno.SK_aluno     < ft_receita_mensalidade.fk_SK_aluno
+Ref: dim_curso.SK_curso     < ft_receita_mensalidade.fk_SK_curso
+Ref: dim_unidade.SK_unidade < ft_receita_mensalidade.fk_SK_unidade
