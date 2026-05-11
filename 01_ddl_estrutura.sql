@@ -817,6 +817,12 @@ BEGIN
       SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Apos Retorno intervalo, esperado Saida ou Intervalo.';
     END IF;
+  ELSE
+    -- Primeiro registro de ponto do funcionario deve obrigatoriamente ser Entrada
+    IF NEW.tipo != 'Entrada' THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Primeiro registro de ponto deve ser Entrada.';
+    END IF;
   END IF;
 END$$
 DELIMITER ;
@@ -849,6 +855,12 @@ BEGIN
     IF ultimo_tipo = 'Retorno intervalo' AND NEW.tipo NOT IN ('Saida', 'Intervalo') THEN
       SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Apos Retorno intervalo, esperado Saida ou Intervalo.';
+    END IF;
+  ELSE
+    -- Primeiro registro de ponto do funcionario deve obrigatoriamente ser Entrada
+    IF NEW.tipo != 'Entrada' THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Primeiro registro de ponto deve ser Entrada.';
     END IF;
   END IF;
 END$$
@@ -1158,6 +1170,41 @@ BEGIN
   IF total = 0 THEN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'Aluno nao esta matriculado nesta turma.';
+  END IF;
+END$$
+DELIMITER ;
+
+-- TR_matricula_turma_curso: aluno nao pode ser inserido em turma de curso diferente da sua matricula
+-- UNIQUE parcial nao disponivel no MySQL; regra implementada via trigger
+DELIMITER $$
+CREATE TRIGGER TR_matricula_turma_curso_insert
+BEFORE INSERT ON matricula_turma
+FOR EACH ROW
+BEGIN
+  DECLARE curso_matricula CHAR(3);
+  DECLARE curso_turma     CHAR(3);
+  SELECT fk_curso INTO curso_matricula FROM matricula WHERE pk_id_matricula = NEW.fk_id_matricula;
+  SELECT fk_curso INTO curso_turma     FROM turma     WHERE pk_id_turma     = NEW.fk_id_turma;
+  IF curso_matricula != curso_turma THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Aluno nao pode ser matriculado em turma de curso diferente da sua matricula.';
+  END IF;
+END$$
+DELIMITER ;
+
+-- TR_turma_limite_alunos: capacidade maxima da turma nao pode ser ultrapassada
+DELIMITER $$
+CREATE TRIGGER TR_turma_limite_alunos_insert
+BEFORE INSERT ON matricula_turma
+FOR EACH ROW
+BEGIN
+  DECLARE alunos_atuais INT;
+  DECLARE limite        INT;
+  SELECT COUNT(*)      INTO alunos_atuais FROM matricula_turma WHERE fk_id_turma = NEW.fk_id_turma;
+  SELECT limite_alunos INTO limite        FROM turma           WHERE pk_id_turma  = NEW.fk_id_turma;
+  IF alunos_atuais >= limite THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Turma atingiu o limite maximo de alunos.';
   END IF;
 END$$
 DELIMITER ;

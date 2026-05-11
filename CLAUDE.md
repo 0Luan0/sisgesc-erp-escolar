@@ -52,6 +52,7 @@ O MySQL está em `/usr/local/mysql/bin/mysql`. O SOURCE não aceita caminhos com
 - **33 tabelas** em `erp_escolar`
 - **10 tabelas** em `erp_escolar_olap` (6 dims + 4 fatos)
 - `ferias`: 3 registros, `conjuge_funcionario`: 2 registros
+- `pagamento_a_vista`: 1 registro (Lucas/ADS, julho 2024, R$ 950.00 em Dinheiro)
 - Validação financeira: `soma_oltp = soma_olap = 36387.50`, `diferenca = 0.00`
 - ACID: rollback → 8 alunos antes = 8 depois; commit → A0000009 persiste
 
@@ -68,6 +69,8 @@ O MySQL está em `/usr/local/mysql/bin/mysql`. O SOURCE não aceita caminhos com
 | `SOURCE` não funcionava com `<` redirecionamento | SOURCE é comando interativo do MySQL, não suporta stdin | `run_all.sql` gerado como arquivo único sem SOURCE |
 | `CREATE INDEX IF NOT EXISTS` falhava | Sintaxe inválida no MySQL (não existe) | Removido o `IF NOT EXISTS` de todos os CREATE INDEX |
 | SOURCE com espaço no caminho falhava | SOURCE não aceita espaços no path nem com aspas nem com backslash | Copiar para /tmp antes de rodar |
+| `TR_ponto_alternancia` aceitava qualquer tipo como primeiro ponto | Bloco `IF ultimo_tipo IS NOT NULL` pulado quando sem registro anterior | Adicionado `ELSE` nos dois triggers exigindo `Entrada` como primeiro registro |
+| `03_oltp_consultas.sql` com dois Q05 e Q13 antes de Q12 | Q05-RH e Q05 nomeados igual; Q13 escrito antes de Q12 | Renumeração completa Q01–Q15; consistência financeira (Q13) antes de anomalia (Q14) |
 
 ---
 

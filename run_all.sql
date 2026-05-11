@@ -831,6 +831,12 @@ BEGIN
       SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Apos Retorno intervalo, esperado Saida ou Intervalo.';
     END IF;
+  ELSE
+    -- Primeiro registro de ponto do funcionario deve obrigatoriamente ser Entrada
+    IF NEW.tipo != 'Entrada' THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Primeiro registro de ponto deve ser Entrada.';
+    END IF;
   END IF;
 END$$
 DELIMITER ;
@@ -863,6 +869,12 @@ BEGIN
     IF ultimo_tipo = 'Retorno intervalo' AND NEW.tipo NOT IN ('Saida', 'Intervalo') THEN
       SIGNAL SQLSTATE '45000'
         SET MESSAGE_TEXT = 'Apos Retorno intervalo, esperado Saida ou Intervalo.';
+    END IF;
+  ELSE
+    -- Primeiro registro de ponto do funcionario deve obrigatoriamente ser Entrada
+    IF NEW.tipo != 'Entrada' THEN
+      SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Primeiro registro de ponto deve ser Entrada.';
     END IF;
   END IF;
 END$$
@@ -1172,6 +1184,41 @@ BEGIN
   IF total = 0 THEN
     SIGNAL SQLSTATE '45000'
       SET MESSAGE_TEXT = 'Aluno nao esta matriculado nesta turma.';
+  END IF;
+END$$
+DELIMITER ;
+
+-- TR_matricula_turma_curso: aluno nao pode ser inserido em turma de curso diferente da sua matricula
+-- UNIQUE parcial nao disponivel no MySQL; regra implementada via trigger
+DELIMITER $$
+CREATE TRIGGER TR_matricula_turma_curso_insert
+BEFORE INSERT ON matricula_turma
+FOR EACH ROW
+BEGIN
+  DECLARE curso_matricula CHAR(3);
+  DECLARE curso_turma     CHAR(3);
+  SELECT fk_curso INTO curso_matricula FROM matricula WHERE pk_id_matricula = NEW.fk_id_matricula;
+  SELECT fk_curso INTO curso_turma     FROM turma     WHERE pk_id_turma     = NEW.fk_id_turma;
+  IF curso_matricula != curso_turma THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Aluno nao pode ser matriculado em turma de curso diferente da sua matricula.';
+  END IF;
+END$$
+DELIMITER ;
+
+-- TR_turma_limite_alunos: capacidade maxima da turma nao pode ser ultrapassada
+DELIMITER $$
+CREATE TRIGGER TR_turma_limite_alunos_insert
+BEFORE INSERT ON matricula_turma
+FOR EACH ROW
+BEGIN
+  DECLARE alunos_atuais INT;
+  DECLARE limite        INT;
+  SELECT COUNT(*)      INTO alunos_atuais FROM matricula_turma WHERE fk_id_turma = NEW.fk_id_turma;
+  SELECT limite_alunos INTO limite        FROM turma           WHERE pk_id_turma  = NEW.fk_id_turma;
+  IF alunos_atuais >= limite THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'Turma atingiu o limite maximo de alunos.';
   END IF;
 END$$
 DELIMITER ;
@@ -1921,6 +1968,28 @@ VALUES
   (39, 8, '2024-05', 'Pix',           '2024-05-08',  950.00, 'Pago', 'PIX-2024-0508'),
   (40, 8, '2024-06', 'Pix',           '2024-06-08',  950.00, 'Pago', 'PIX-2024-0608');
 
+-- pagamentos a vista: quita uma ou mais mensalidades em transacao unica
+-- fluxo: pagamento_a_vista (cabecalho) → pagamento_avista_mensalidade (N mensalidades cobertas)
+-- a aplicacao e responsavel por atualizar mensalidade.status apos registrar o avista
+-- (nao ha trigger automatico: avista e fluxo alternativo ao pagamento recorrente)
+--
+-- cenario: Lucas Mendes (contrato 3 / ADS) quita julho/2024 presencialmente em dinheiro
+INSERT IGNORE INTO pagamento_a_vista
+  (pk_id_avista, fk_id_contrato, metodo, valor_total, data_pagamento, status)
+VALUES
+  (1, 3, 'Dinheiro', 950.00, '2024-07-03', 'Pago');
+
+-- vincula o avista as mensalidades quitadas
+INSERT IGNORE INTO pagamento_avista_mensalidade
+  (fk_id_avista, fk_id_contrato, periodo)
+VALUES
+  (1, 3, '2024-07');
+
+-- atualiza status da mensalidade para refletir o pagamento a vista
+UPDATE mensalidade
+   SET status = 'Pago'
+ WHERE fk_id_contrato = 3 AND periodo = '2024-07' AND status = 'Pendente';
+
 -- pagamento parcelado: contrato 2, julho/2024 (Atrasado -> quitado em 2 parcelas)
 -- demonstra que o sistema aceita multiplos registros de pagamento para um mesmo periodo
 -- caso real: aluno pagou 500 no dia 05/08 e 450 no dia 20/08 para quitar a mensalidade
@@ -2000,6 +2069,8 @@ UNION ALL SELECT 'bolsa',                   COUNT(*) FROM bolsa
 UNION ALL SELECT 'mensalidade',             COUNT(*) FROM mensalidade
 UNION ALL SELECT 'atraso_mensalidade',      COUNT(*) FROM atraso_mensalidade
 UNION ALL SELECT 'pagamento',               COUNT(*) FROM pagamento
+UNION ALL SELECT 'pagamento_a_vista',       COUNT(*) FROM pagamento_a_vista
+UNION ALL SELECT 'pagamento_avista_mens',   COUNT(*) FROM pagamento_avista_mensalidade
 UNION ALL SELECT 'conjuge_funcionario',     COUNT(*) FROM conjuge_funcionario;
 -- ============================================================
 -- SISGESC — Consultas OLTP
@@ -2074,7 +2145,7 @@ JOIN curso       c  ON c.codigo_curso    = m.fk_curso
 WHERE ms.status IN ('Pendente', 'Atrasado')
 ORDER BY ms.status DESC, ms.data_vencimento;
 
--- Q05-RH: Pares de conjuges na empresa com seus respectivos departamentos
+-- Q05: Pares de conjuges na empresa com seus respectivos departamentos
 -- RN: empresa permite conjuges, mas relacao hierarquica direta deve ser monitorada
 SELECT
     CONCAT(f1.nome, ' ', f1.sobrenome) AS conjuge_1,
@@ -2097,7 +2168,7 @@ ORDER BY cf.data_uniao;
 -- BLOCO 2: Subselects com agregacao
 -- ============================================================
 
--- Q05: Total pago por aluno no ano de 2024 (soma de pagamentos confirmados)
+-- Q06: Total pago por aluno no ano de 2024 (soma de pagamentos confirmados)
 SELECT
     CONCAT(a.nome, ' ', a.sobrenome)     AS aluno,
     c.nome_curso,
@@ -2113,7 +2184,7 @@ WHERE p.status = 'Pago'
 GROUP BY a.rga, c.codigo_curso
 ORDER BY total_pago_2024 DESC;
 
--- Q06: Nota final por aluno por turma (media ponderada via view)
+-- Q07: Nota final por aluno por turma (media ponderada via view)
 -- vw_nota_final ja calcula SUM(nota*peso)/SUM(peso)
 SELECT
     CONCAT(a.nome, ' ', a.sobrenome) AS aluno,
@@ -2131,7 +2202,7 @@ JOIN turma      t   ON t.pk_id_turma     = nf.fk_id_turma
 JOIN materia    mat ON mat.codigo_materia = t.fk_materia
 ORDER BY mat.nome_materia, nota_final DESC;
 
--- Q07: Quantidade de alunos matriculados por curso
+-- Q08: Quantidade de alunos matriculados por curso
 SELECT
     c.codigo_curso,
     c.nome_curso,
@@ -2144,7 +2215,7 @@ WHERE c.ativo = TRUE
 GROUP BY c.codigo_curso
 ORDER BY total_matriculas DESC;
 
--- Q08: Funcionarios com salario acima da media geral de salarios ativos
+-- Q09: Funcionarios com salario acima da media geral de salarios ativos
 SELECT
     CONCAT(f.nome, ' ', f.sobrenome) AS funcionario,
     cg.nome_cargo,
@@ -2165,7 +2236,7 @@ ORDER BY hs.salario DESC;
 -- BLOCO 3: Subselects correlacionados
 -- ============================================================
 
--- Q09: Alunos com percentual de presenca abaixo de 75% em alguma turma
+-- Q10: Alunos com percentual de presenca abaixo de 75% em alguma turma
 -- 75% e o minimo legal de frequencia (RN-15 do sistema)
 SELECT
     CONCAT(a.nome, ' ', a.sobrenome) AS aluno,
@@ -2187,7 +2258,7 @@ GROUP BY fr.fk_id_matricula, fr.fk_id_turma
 HAVING pct_frequencia < 75
 ORDER BY pct_frequencia ASC;
 
--- Q10: Cursos cuja receita mensal media supera a media geral de todos os cursos
+-- Q11: Cursos cuja receita mensal media supera a media geral de todos os cursos
 -- subselect correlacionado: compara cada curso com o conjunto todo
 SELECT
     c.nome_curso,
@@ -2205,7 +2276,7 @@ HAVING receita_media_mensal > (
 )
 ORDER BY receita_media_mensal DESC;
 
--- Q11: Professores que ministram mais de uma materia no semestre 2024/1
+-- Q12: Professores que ministram mais de uma materia no semestre 2024/1
 SELECT
     CONCAT(f.nome, ' ', f.sobrenome) AS professor,
     COUNT(DISTINCT t.fk_materia)     AS qtd_materias,
@@ -2279,6 +2350,28 @@ JOIN aluno       a  ON a.rga              = m.fk_rga
 WHERE ms.status = 'Pago'
 GROUP BY ct.pk_id_contrato
 ORDER BY diferenca DESC;
+
+-- Q15: Pagamentos realizados a vista — cabecalho + mensalidades cobertas
+-- Demonstra o fluxo alternativo ao pagamento recorrente:
+-- pagamento_a_vista (transacao unica) vinculado a N mensalidades via N:N
+SELECT
+    CONCAT(a.nome, ' ', a.sobrenome)                               AS aluno,
+    c.nome_curso,
+    pav.pk_id_avista                                               AS id_avista,
+    pav.metodo,
+    pav.data_pagamento,
+    pav.valor_total,
+    pav.status                                                     AS status_avista,
+    GROUP_CONCAT(pam.periodo ORDER BY pam.periodo SEPARATOR ', ')  AS periodos_quitados,
+    COUNT(pam.periodo)                                             AS qtd_mensalidades
+FROM pagamento_a_vista             pav
+JOIN contrato                      ct  ON ct.pk_id_contrato  = pav.fk_id_contrato
+JOIN matricula                     m   ON m.pk_id_matricula  = ct.fk_id_matricula
+JOIN aluno                         a   ON a.rga              = m.fk_rga
+JOIN curso                         c   ON c.codigo_curso     = m.fk_curso
+JOIN pagamento_avista_mensalidade  pam ON pam.fk_id_avista   = pav.pk_id_avista
+GROUP BY pav.pk_id_avista
+ORDER BY pav.data_pagamento;
 
 -- ============================================================
 -- BLOCO 4: Controle Transacional (ACID)

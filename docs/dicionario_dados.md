@@ -148,7 +148,7 @@ Contas para depósito de salário. Um funcionário pode ter mais de uma; apenas 
 ---
 
 ### `ponto`
-Registros de entrada/saída. Trigger garante alternância obrigatória (Entrada → Saída → Entrada…).
+Registros de entrada/saída. Dois triggers (`TR_ponto_alternancia_insert` e `TR_ponto_alternancia_update`) garantem: (a) o primeiro registro do funcionário deve obrigatoriamente ser `Entrada`; (b) a sequência seguinte deve alternar conforme o protocolo (Entrada → Saída|Intervalo → Retorno intervalo → Saída|Intervalo).
 
 | Coluna | Tipo | Restrições | Descrição |
 |---|---|---|---|
@@ -373,6 +373,10 @@ N:N entre matrícula e turma. Controla em quais turmas o aluno está inscrito.
 | `fk_id_turma` | INT | PK + FK → turma | |
 | `status` | VARCHAR(20) | FK → status_matricula_turma | |
 
+**Triggers:**
+- `TR_matricula_turma_curso_insert` — impede que um aluno seja inserido em turma de curso diferente da sua matrícula (cross-course enrollment). UNIQUE parcial não existe no MySQL; regra implementada via trigger.
+- `TR_turma_limite_alunos_insert` — impede ultrapassar `turma.limite_alunos`. O campo existia mas não tinha proteção ativa no banco; agora é enforced antes de cada INSERT.
+
 ---
 
 ### `avaliacao`
@@ -554,3 +558,103 @@ Tabela fato. Grain: 1 linha por mensalidade gerada no OLTP.
 | `valor_pago` | DECIMAL(10,2) | 0.00 para não quitadas. |
 | `status_mensalidade` | VARCHAR(10) | Degenerate dimension. |
 | `tem_bolsa` | TINYINT(1) | Flag analítica (0/1). |
+
+---
+
+### `dim_materia`
+Dimensão de matérias ativas no momento da carga ETL.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_materia` | INT | Surrogate AUTO_INCREMENT. |
+| `codigo_materia` | CHAR(5) | UNIQUE — chave de lookup. |
+| `nome_materia` | VARCHAR(60) | |
+| `carga_horaria` | INT | Horas totais da matéria. |
+
+---
+
+### `dim_funcionario`
+Snapshot dos atributos descritivos do funcionário no momento da carga ETL. Isola o OLAP do OLTP e permite SCD futura.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_funcionario` | INT | Surrogate AUTO_INCREMENT. |
+| `rgf` | CHAR(5) | UNIQUE — chave de lookup para o ETL. |
+| `nome_completo` | VARCHAR(101) | Snapshot no momento da carga. |
+| `codigo_cargo` | CHAR(3) | |
+| `nome_cargo` | VARCHAR(120) | Snapshot. |
+| `nome_departamento` | VARCHAR(100) | Snapshot. |
+| `nivel_cargo` | VARCHAR(10) | Junior, Pleno, Senior. |
+| `data_admissao` | DATE | |
+
+---
+
+### `ft_desempenho_academico`
+Tabela fato. Grain: 1 linha por (aluno × turma) = aluno × matéria × semestre letivo. Permite análise de aprovação, reprovação, frequência e nota média por curso/matéria/período.
+
+**Nota de design:** usa `ano_letivo` e `semestre_letivo` como degenerate dimensions (não FK para `dim_tempo`) porque o período acadêmico é semestral, enquanto `dim_tempo` é mensal.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_fato` | INT | Surrogate. |
+| `fk_id_aluno` | INT | FK → dim_aluno |
+| `fk_id_curso` | INT | FK → dim_curso |
+| `fk_id_materia` | INT | FK → dim_materia |
+| `ano_letivo` | YEAR | Degenerate dimension. |
+| `semestre_letivo` | TINYINT | 1 ou 2. Degenerate dimension. |
+| `nota_final` | DECIMAL(4,2) | Média ponderada; NULL se sem avaliação registrada. |
+| `total_aulas` | INT | Aulas registradas na frequência. |
+| `total_presencas` | INT | |
+| `percentual_presenca` | DECIMAL(5,2) | Calculado no ETL. |
+| `status_turma` | VARCHAR(20) | Degenerate dimension (Cursando / Aprovado / Reprovado). |
+
+---
+
+### `ft_folha_rh`
+Tabela fato. Grain: 1 linha por (funcionário × período mensal). Permite análise de custo de pessoal por departamento e por mês.
+
+**Nota de design:** `salario_liquido` é métrica agregada do OLAP (snapshot do mês processado), análoga aos snapshots financeiros do módulo Financeiro — não é campo derivado proibido pelo critério 4.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_fato` | INT | Surrogate. |
+| `fk_id_funcionario` | INT | FK → dim_funcionario |
+| `fk_id_tempo` | INT | FK → dim_tempo (YYYYMM) |
+| `salario_bruto` | DECIMAL(10,2) | Snapshot do período. |
+| `total_proventos` | DECIMAL(10,2) | Soma dos eventos tipo Provento. |
+| `total_descontos` | DECIMAL(10,2) | Soma dos eventos tipo Desconto. |
+| `salario_liquido` | DECIMAL(10,2) | `bruto + proventos - descontos`. |
+| `status_folha` | VARCHAR(20) | Degenerate dimension. |
+
+---
+
+### `ft_movimentacao_rh`
+Tabela fato. Grain: 1 linha por evento de admissão ou desligamento. Permite análise de headcount, turnover e tempo médio de empresa.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `pk_id_fato` | INT | Surrogate. |
+| `fk_id_funcionario` | INT | FK → dim_funcionario |
+| `fk_id_tempo` | INT | FK → dim_tempo (mês do evento) |
+| `tipo_movimentacao` | VARCHAR(20) | `Admissao` ou `Desligamento`. CHECK constraint. |
+| `dias_empresa` | INT | 0 na admissão; `DATEDIFF(desligamento, admissao)` na saída. |
+| `data_evento` | DATE | Data exata do evento. |
+
+---
+
+## ETL — Estratégia de Carga OLAP
+
+Estratégia **full reload** (TRUNCATE + INSERT): idempotente, produz o mesmo resultado independente de quantas vezes for executado. Ordem de carga: dimensões primeiro, fatos por último (respeita integridade referencial).
+
+| Step | Tabela | Fonte OLTP |
+|---|---|---|
+| 1 | `dim_tempo` | UNION de `mensalidade.periodo`, `folha_pagamentos.periodo`, datas de admissão/desligamento |
+| 2 | `dim_unidade` | Mapeamento fixo: ADS → TI, ENF → Saúde, LOG → Gestão |
+| 3 | `dim_curso` | `curso` (apenas ativos) |
+| 4 | `dim_aluno` | `aluno` + `matricula` (status Cursando) |
+| 5 | `ft_receita_mensalidade` | `mensalidade` + `pagamento` (LEFT JOIN agregado) |
+| 6 | `dim_materia` | `materia` (apenas ativas) |
+| 7 | `dim_funcionario` | `funcionario` + `cargo` |
+| 8 | `ft_desempenho_academico` | `matricula_turma` + `nota`/`avaliacao` + `frequencia` (subqueries pré-agregadas para evitar produto cartesiano) |
+| 9 | `ft_folha_rh` | `folha_pagamentos` + `folha_evento` + `evento_folha` |
+| 10 | `ft_movimentacao_rh` | `funcionario` (admissão + desligamento via UNION ALL) |

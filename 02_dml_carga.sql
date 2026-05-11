@@ -591,6 +591,28 @@ VALUES
   (39, 8, '2024-05', 'Pix',           '2024-05-08',  950.00, 'Pago', 'PIX-2024-0508'),
   (40, 8, '2024-06', 'Pix',           '2024-06-08',  950.00, 'Pago', 'PIX-2024-0608');
 
+-- pagamentos a vista: quita uma ou mais mensalidades em transacao unica
+-- fluxo: pagamento_a_vista (cabecalho) → pagamento_avista_mensalidade (N mensalidades cobertas)
+-- a aplicacao e responsavel por atualizar mensalidade.status apos registrar o avista
+-- (nao ha trigger automatico: avista e fluxo alternativo ao pagamento recorrente)
+--
+-- cenario: Lucas Mendes (contrato 3 / ADS) quita julho/2024 presencialmente em dinheiro
+INSERT IGNORE INTO pagamento_a_vista
+  (pk_id_avista, fk_id_contrato, metodo, valor_total, data_pagamento, status)
+VALUES
+  (1, 3, 'Dinheiro', 950.00, '2024-07-03', 'Pago');
+
+-- vincula o avista as mensalidades quitadas
+INSERT IGNORE INTO pagamento_avista_mensalidade
+  (fk_id_avista, fk_id_contrato, periodo)
+VALUES
+  (1, 3, '2024-07');
+
+-- atualiza status da mensalidade para refletir o pagamento a vista
+UPDATE mensalidade
+   SET status = 'Pago'
+ WHERE fk_id_contrato = 3 AND periodo = '2024-07' AND status = 'Pendente';
+
 -- pagamento parcelado: contrato 2, julho/2024 (Atrasado -> quitado em 2 parcelas)
 -- demonstra que o sistema aceita multiplos registros de pagamento para um mesmo periodo
 -- caso real: aluno pagou 500 no dia 05/08 e 450 no dia 20/08 para quitar a mensalidade
@@ -670,4 +692,6 @@ UNION ALL SELECT 'bolsa',                   COUNT(*) FROM bolsa
 UNION ALL SELECT 'mensalidade',             COUNT(*) FROM mensalidade
 UNION ALL SELECT 'atraso_mensalidade',      COUNT(*) FROM atraso_mensalidade
 UNION ALL SELECT 'pagamento',               COUNT(*) FROM pagamento
+UNION ALL SELECT 'pagamento_a_vista',       COUNT(*) FROM pagamento_a_vista
+UNION ALL SELECT 'pagamento_avista_mens',   COUNT(*) FROM pagamento_avista_mensalidade
 UNION ALL SELECT 'conjuge_funcionario',     COUNT(*) FROM conjuge_funcionario;
