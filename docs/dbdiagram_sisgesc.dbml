@@ -199,6 +199,8 @@ Table turma {
 
 // N:N matricula x turma — PK composta natural
 // nota_final (DERIVADO) = SUM(nota * peso) / SUM(peso) — via view
+// TR_matricula_turma_curso: impede inscrição em turma de curso diferente
+// TR_turma_limite_alunos: impede ultrapassar limite_alunos
 Table matricula_turma {
   fk_id_matricula int         [primary key]
   fk_id_turma     int         [primary key]
@@ -395,10 +397,11 @@ Table conta_banco_funcionario {
 }
 
 // PK composta natural — (fk_rgf, data_hora)
-// TR_ponto_alternancia: registros devem alternar Entrada/Saída
+// TR_ponto_alternancia: primeiro registro deve ser Entrada;
+// sequência deve alternar Entrada → Saída|Intervalo → Retorno → Saída
 Table ponto {
-  fk_rgf    char(5)   [primary key]
-  data_hora datetime  [primary key]
+  fk_rgf    char(5)     [primary key]
+  data_hora datetime    [primary key]
   tipo      varchar(30) [not null]
 }
 
@@ -521,6 +524,26 @@ Table dim_unidade {
   nome_unidade  varchar(60) [unique, not null]
 }
 
+// PK surrogate
+Table dim_materia {
+  pk_id_materia  int         [primary key, increment]
+  codigo_materia char(5)     [unique, not null]
+  nome_materia   varchar(60) [not null]
+  carga_horaria  int         [not null]
+}
+
+// PK surrogate — snapshot dos atributos no momento da carga ETL
+Table dim_funcionario {
+  pk_id_funcionario int          [primary key, increment]
+  rgf               char(5)      [unique, not null]
+  nome_completo     varchar(101) [not null]
+  codigo_cargo      char(3)      [not null]
+  nome_cargo        varchar(120) [not null]
+  nome_departamento varchar(100) [not null]
+  nivel_cargo       varchar(10)  [not null]
+  data_admissao     date         [not null]
+}
+
 // Grain: 1 linha por mensalidade gerada no OLTP
 // Métricas aditivas: valor_base, valor_desconto, valor_liquido, valor_pago
 Table ft_receita_mensalidade {
@@ -535,6 +558,46 @@ Table ft_receita_mensalidade {
   valor_pago         decimal(10,2) [not null]
   status_mensalidade varchar(10)   [not null, note: 'degenerate dimension']
   tem_bolsa          tinyint       [not null]
+}
+
+// Grain: 1 linha por (aluno x turma) = aluno x matéria x semestre
+// ano_letivo e semestre_letivo são degenerate dims (período semestral, não mensal)
+Table ft_desempenho_academico {
+  pk_id_fato          int          [primary key, increment]
+  fk_id_aluno         int          [not null, ref: > dim_aluno.pk_id_aluno]
+  fk_id_curso         int          [not null, ref: > dim_curso.pk_id_curso]
+  fk_id_materia       int          [not null, ref: > dim_materia.pk_id_materia]
+  ano_letivo          year         [not null, note: 'degenerate dimension']
+  semestre_letivo     tinyint      [not null, note: 'degenerate dimension']
+  nota_final          decimal(4,2) [note: 'NULL se sem avaliação registrada']
+  total_aulas         int          [not null]
+  total_presencas     int          [not null]
+  percentual_presenca decimal(5,2) [not null]
+  status_turma        varchar(20)  [not null, note: 'degenerate dimension']
+}
+
+// Grain: 1 linha por (funcionário x período mensal)
+// salario_liquido é snapshot OLAP — não é campo derivado proibido (critério 4)
+Table ft_folha_rh {
+  pk_id_fato        int           [primary key, increment]
+  fk_id_funcionario int           [not null, ref: > dim_funcionario.pk_id_funcionario]
+  fk_id_tempo       int           [not null, ref: > dim_tempo.pk_id_tempo]
+  salario_bruto     decimal(10,2) [not null]
+  total_proventos   decimal(10,2) [not null]
+  total_descontos   decimal(10,2) [not null]
+  salario_liquido   decimal(10,2) [not null]
+  status_folha      varchar(20)   [not null, note: 'degenerate dimension']
+}
+
+// Grain: 1 linha por evento de admissão ou desligamento
+// Permite análise de headcount, turnover e tempo médio de empresa
+Table ft_movimentacao_rh {
+  pk_id_fato        int         [primary key, increment]
+  fk_id_funcionario int         [not null, ref: > dim_funcionario.pk_id_funcionario]
+  fk_id_tempo       int         [not null, ref: > dim_tempo.pk_id_tempo]
+  tipo_movimentacao varchar(20) [not null, note: 'Admissao | Desligamento']
+  dias_empresa      int         [not null, note: '0 na admissão; DATEDIFF na saída']
+  data_evento       date        [not null]
 }
 
 // ============================================================
@@ -634,7 +697,7 @@ Ref: periodo_aquisitivo.pk_id_periodo - abono_ferias.fk_id_periodo
 // REFERÊNCIAS — STAR SCHEMA OLAP
 // ============================================================
 
-Ref: dim_tempo.pk_id_tempo      < ft_receita_mensalidade.fk_id_tempo
-Ref: dim_aluno.pk_id_aluno      < ft_receita_mensalidade.fk_id_aluno
-Ref: dim_curso.pk_id_curso      < ft_receita_mensalidade.fk_id_curso
-Ref: dim_unidade.pk_id_unidade  < ft_receita_mensalidade.fk_id_unidade
+Ref: dim_tempo.pk_id_tempo     < ft_receita_mensalidade.fk_id_tempo
+Ref: dim_aluno.pk_id_aluno     < ft_receita_mensalidade.fk_id_aluno
+Ref: dim_curso.pk_id_curso     < ft_receita_mensalidade.fk_id_curso
+Ref: dim_unidade.pk_id_unidade < ft_receita_mensalidade.fk_id_unidade
