@@ -133,6 +133,27 @@ CREATE TABLE nivel_ensino (
 );
 INSERT INTO nivel_ensino (nivel) VALUES ('Tecnico'), ('Tecnologo'), ('Bacharelado'), ('Pos-Graduacao');
 
+CREATE TABLE tipo_feriado (
+  tipo VARCHAR(20) NOT NULL,
+  PRIMARY KEY (tipo)
+);
+INSERT INTO tipo_feriado (tipo) VALUES ('Nacional'), ('Estadual'), ('Municipal'), ('Escolar');
+
+-- ============================================================
+-- TABELA DE REFERENCIA — Feriados
+-- PK natural: data DATE — unica, estavel, imutavel
+-- Utilidade: consultas de frequencia e planejamento academico
+-- Nao impacta calculo de frequencia (registro-driven) mas e referencia util
+-- ============================================================
+CREATE TABLE feriado (
+  data  DATE        NOT NULL,
+  nome  VARCHAR(100) NOT NULL,
+  tipo  VARCHAR(20)  NOT NULL,
+  PRIMARY KEY (data),
+  CONSTRAINT fk_feriado_tipo FOREIGN KEY (tipo)
+    REFERENCES tipo_feriado(tipo) ON DELETE RESTRICT ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 
 -- ============================================================
 -- MODULO RH — Departamento, Cargo

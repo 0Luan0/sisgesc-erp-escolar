@@ -634,6 +634,23 @@ INSERT IGNORE INTO conjuge_funcionario (fk_rgf_1, fk_rgf_2, tipo_uniao, data_uni
 
 
 -- ============================================================
+-- TABELA DE REFERENCIA — Feriados nacionais 2024
+-- ============================================================
+INSERT IGNORE INTO feriado (data, nome, tipo) VALUES
+  ('2024-01-01', 'Confraternizacao Universal',          'Nacional'),
+  ('2024-02-12', 'Carnaval',                            'Nacional'),
+  ('2024-02-13', 'Carnaval',                            'Nacional'),
+  ('2024-03-29', 'Sexta-Feira Santa',                   'Nacional'),
+  ('2024-04-21', 'Tiradentes',                          'Nacional'),
+  ('2024-05-01', 'Dia do Trabalho',                     'Nacional'),
+  ('2024-05-30', 'Corpus Christi',                      'Nacional'),
+  ('2024-09-07', 'Independencia do Brasil',             'Nacional'),
+  ('2024-10-12', 'Nossa Senhora Aparecida',             'Nacional'),
+  ('2024-11-02', 'Finados',                             'Nacional'),
+  ('2024-11-15', 'Proclamacao da Republica',            'Nacional'),
+  ('2024-12-25', 'Natal',                               'Nacional');
+
+-- ============================================================
 -- CONTAGEM DEPOIS DA CARGA
 -- Idempotencia confirmada quando ANTES (2a execucao) = DEPOIS (1a execucao)
 -- ============================================================
@@ -694,4 +711,5 @@ UNION ALL SELECT 'atraso_mensalidade',      COUNT(*) FROM atraso_mensalidade
 UNION ALL SELECT 'pagamento',               COUNT(*) FROM pagamento
 UNION ALL SELECT 'pagamento_a_vista',       COUNT(*) FROM pagamento_a_vista
 UNION ALL SELECT 'pagamento_avista_mens',   COUNT(*) FROM pagamento_avista_mensalidade
-UNION ALL SELECT 'conjuge_funcionario',     COUNT(*) FROM conjuge_funcionario;
+UNION ALL SELECT 'conjuge_funcionario',     COUNT(*) FROM conjuge_funcionario
+UNION ALL SELECT 'feriado',                 COUNT(*) FROM feriado;

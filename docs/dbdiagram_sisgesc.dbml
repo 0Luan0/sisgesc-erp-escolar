@@ -33,7 +33,7 @@ Table status_funcionario {
 Table status_contrato {
   status varchar(20) [primary key]
 }
-// Ex: 'Pendente', 'Pago', 'Atrasado', 'Cancelado'
+// Ex: 'Pendente', 'Pago', 'Atrasado', 'Cancelado', 'Parcial'
 Table status_mensalidade {
   status varchar(20) [primary key]
 }
@@ -81,10 +81,24 @@ Table tipo_ponto {
 Table metodo_pagamento {
   metodo varchar(30) [primary key]
 }
-// Adicionado na v13 — correção do feedback da 1ª entrega
 // Ex: 'Técnico', 'Tecnólogo', 'Bacharelado', 'Pós-Graduação'
 Table nivel_ensino {
   nivel varchar(20) [primary key]
+}
+// Ex: 'Nacional', 'Estadual', 'Municipal', 'Escolar'
+Table tipo_feriado {
+  tipo varchar(20) [primary key]
+}
+
+// ============================================================
+// TABELA DE REFERÊNCIA — Feriados
+// PK natural: data DATE — única, estável, imutável
+// Utilidade: consultas de frequência e planejamento acadêmico
+// ============================================================
+Table feriado {
+  data date        [primary key]
+  nome varchar(100) [not null]
+  tipo varchar(20)  [not null]
 }
 
 // ============================================================
@@ -92,7 +106,6 @@ Table nivel_ensino {
 // ============================================================
 
 // PK natural — codigo_curso gerado e controlado pelo sistema
-// nivel_ensino adicionado na v13 (correção da 1ª entrega)
 Table curso {
   codigo_curso       char(3)      [primary key]
   nome_curso         varchar(60)  [not null]
@@ -116,8 +129,8 @@ Table materia {
 
 // N:N curso x materia — grade base vigente desde a criação do curso
 // PK composta natural
-// 2FN: obrigatoria e semestre_recomendado dependem do par completo ✓
-// 3FN: sem dependências transitivas ✓
+// 2FN: obrigatoria e semestre_recomendado dependem do par completo
+// 3FN: sem dependências transitivas
 Table curso_materia {
   codigo_curso         char(3)  [primary key]
   codigo_materia       char(5)  [primary key]
@@ -164,7 +177,7 @@ Table aluno {
 
 // PK surrogate — sem chave natural simples para matrícula
 // UQ_matricula_ativa: UNIQUE(fk_rga, fk_curso) WHERE status = 'Cursando'
-// ano_curso (DERIVADO) — NÃO armazenar
+// TR_matricula_ativa: impede aluno com matrícula 'Cursando' em outro curso
 Table matricula {
   pk_id_matricula    int         [primary key, increment]
   fk_rga             char(8)     [not null]
@@ -198,7 +211,6 @@ Table turma {
 }
 
 // N:N matricula x turma — PK composta natural
-// nota_final (DERIVADO) = SUM(nota * peso) / SUM(peso) — via view
 // TR_matricula_turma_curso: impede inscrição em turma de curso diferente
 // TR_turma_limite_alunos: impede ultrapassar limite_alunos
 Table matricula_turma {
@@ -218,7 +230,7 @@ Table avaliacao {
 }
 
 // PK composta natural — (fk_id_avaliacao, fk_id_matricula)
-// fk_id_turma REMOVIDO — redundante via avaliacao (3FN)
+// nota_final (DERIVADO) = SUM(nota * peso) / SUM(peso) — via view vw_nota_final
 Table nota {
   fk_id_avaliacao int          [primary key]
   fk_id_matricula int          [primary key]
@@ -227,6 +239,7 @@ Table nota {
 }
 
 // PK composta natural — (fk_id_matricula, fk_id_turma, data_aula)
+// Frequência: registro-driven (1 linha por aluno por aula registrada)
 Table frequencia {
   fk_id_matricula int     [primary key]
   fk_id_turma     int     [primary key]
@@ -267,8 +280,8 @@ Table bolsa {
 }
 
 // PK composta natural — (fk_id_contrato, periodo)
-// valor_final (DERIVADO) = valor_base - valor_desconto — via view
 // valor_base e valor_desconto: snapshots intencionais do momento da geração
+// valor_final (DERIVADO) = valor_base - valor_desconto — via view vw_valor_mensalidade
 Table mensalidade {
   fk_id_contrato  int           [primary key]
   periodo         char(7)       [primary key]
@@ -293,6 +306,7 @@ Table atraso_mensalidade {
 
 // PK surrogate — FK composta (fk_id_contrato, periodo) → mensalidade
 // Pix/Boleto delegados a API externa — banco guarda apenas id_transacao_externo
+// TR_pagamento_quita_mensalidade: atualiza mensalidade.status após cada INSERT
 Table pagamento {
   pk_id_pagamento      int           [primary key, increment]
   fk_id_contrato       int           [not null]
@@ -306,6 +320,7 @@ Table pagamento {
 }
 
 // PK surrogate
+// TR_pagamento_avista_contrato_coerente: contrato deve estar Ativo
 Table pagamento_a_vista {
   pk_id_avista   int           [primary key, increment]
   fk_id_contrato int           [not null]
@@ -422,7 +437,7 @@ Table evento_folha {
 }
 
 // PK composta natural — (fk_rgf, periodo)
-// salario_liquido (DERIVADO) — NÃO armazenar, via view
+// salario_liquido (DERIVADO) — NÃO armazenar, via view vw_salario_liquido
 Table folha_pagamentos {
   fk_rgf         char(5)       [primary key]
   periodo        char(7)       [primary key]
@@ -486,23 +501,38 @@ Table abono_ferias {
   data_solicitacao date          [not null, default: `now()`]
 }
 
+// Auto-relacionamento simétrico de funcionário
+// PK composta: (fk_rgf_1, fk_rgf_2) com regra fk_rgf_1 < fk_rgf_2 — elimina par invertido
+// CHECK(fk_rgf_1 < fk_rgf_2), CHECK(fk_rgf_1 != fk_rgf_2)
+// ON UPDATE RESTRICT em ambas FKs (evita ERROR 3823 com CHECK constraints)
+Table conjuge_funcionario {
+  fk_rgf_1   char(5)     [primary key]
+  fk_rgf_2   char(5)     [primary key]
+  tipo_uniao varchar(20) [not null]
+  // CHECK(tipo_uniao IN ('Casamento', 'Uniao Estavel'))
+  data_uniao date        [not null]
+}
+
 // ============================================================
 // STAR SCHEMA OLAP — banco erp_escolar_olap
 // ============================================================
 
 // PK natural YYYYMM — valor identifica unicamente o período
+// dia_semana: 1=Segunda...7=Domingo (ISO) — representa o 1º dia do mês
 Table dim_tempo {
-  SK_tempo int         [primary key, note: 'YYYYMM ex: 202402']
-  ano         year        [not null]
-  mes         tinyint     [not null]
-  nome_mes    varchar(20) [not null]
-  trimestre   tinyint     [not null]
-  semestre    tinyint     [not null]
+  SK_tempo        int          [primary key, note: 'YYYYMM ex: 202402']
+  ano             year         [not null]
+  mes             tinyint      [not null]
+  nome_mes        varchar(20)  [not null]
+  trimestre       tinyint      [not null]
+  semestre        tinyint      [not null]
+  dia_semana      tinyint      [not null, note: '1=Segunda...7=Domingo (ISO) — 1º dia do mês']
+  nome_dia_semana varchar(15)  [not null, note: 'ex: Segunda-Feira']
 }
 
 // PK surrogate — isolamento do OLTP, suporta SCD futura
 Table dim_aluno {
-  SK_aluno    int          [primary key, increment]
+  SK_aluno       int          [primary key, increment]
   rga            char(8)      [unique]
   nome_completo  varchar(202) [not null]
   ano_ingresso   year         [not null]
@@ -511,7 +541,7 @@ Table dim_aluno {
 
 // PK surrogate
 Table dim_curso {
-  SK_curso  int          [primary key, increment]
+  SK_curso     int          [primary key, increment]
   codigo_curso char(3)      [unique]
   nome_curso   varchar(100) [not null]
   nivel_ensino varchar(30)  [not null]
@@ -520,13 +550,13 @@ Table dim_curso {
 // PK surrogate — não existe no OLTP, derivada no ETL
 // Mapeamento: ADS→TI, ENF→Saúde, LOG→Gestão
 Table dim_unidade {
-  SK_unidade int         [primary key, increment]
-  nome_unidade  varchar(60) [unique, not null]
+  SK_unidade   int         [primary key, increment]
+  nome_unidade varchar(60) [unique, not null]
 }
 
 // PK surrogate
 Table dim_materia {
-  SK_materia  int         [primary key, increment]
+  SK_materia     int         [primary key, increment]
   codigo_materia char(5)     [unique, not null]
   nome_materia   varchar(60) [not null]
   carga_horaria  int         [not null]
@@ -534,7 +564,7 @@ Table dim_materia {
 
 // PK surrogate — snapshot dos atributos no momento da carga ETL
 Table dim_funcionario {
-  SK_funcionario int          [primary key, increment]
+  SK_funcionario    int          [primary key, increment]
   rgf               char(5)      [unique, not null]
   nome_completo     varchar(101) [not null]
   codigo_cargo      char(3)      [not null]
@@ -542,6 +572,24 @@ Table dim_funcionario {
   nome_departamento varchar(100) [not null]
   nivel_cargo       varchar(10)  [not null]
   data_admissao     date         [not null]
+}
+
+// PK surrogate — subconjunto especializado de dim_funcionario (somente professores)
+// Atributos próprios: formacao, especialidade — não existem em dim_funcionario
+Table dim_professor {
+  SK_professor      int          [primary key, increment]
+  rgf               char(5)      [unique, not null]
+  nome_completo     varchar(101) [not null]
+  formacao          varchar(100) [note: 'NULL se não cadastrado no OLTP']
+  especialidade     varchar(100) [note: 'NULL se não cadastrado no OLTP']
+  nome_departamento varchar(100) [not null]
+  data_admissao     date         [not null]
+}
+
+// PK surrogate — vocabulário controlado carregado de metodo_pagamento (OLTP)
+Table dim_metodo_pagamento {
+  SK_metodo   int         [primary key, increment]
+  nome_metodo varchar(30) [not null, unique]
 }
 
 // Grain: 1 linha por mensalidade gerada no OLTP
@@ -561,14 +609,15 @@ Table ft_receita_mensalidade {
 }
 
 // Grain: 1 linha por (aluno x turma) = aluno x matéria x semestre
-// ano_letivo e semestre_letivo são degenerate dims (período semestral, não mensal)
+// ano_letivo, semestre_letivo e turno são degenerate dims
 Table ft_desempenho_academico {
   pk_id_fato          int          [primary key, increment]
-  fk_SK_aluno         int          [not null, ref: > dim_aluno.SK_aluno]
-  fk_SK_curso         int          [not null, ref: > dim_curso.SK_curso]
-  fk_SK_materia       int          [not null, ref: > dim_materia.SK_materia]
+  fk_SK_aluno         int          [not null]
+  fk_SK_curso         int          [not null]
+  fk_SK_materia       int          [not null]
   ano_letivo          year         [not null, note: 'degenerate dimension']
   semestre_letivo     tinyint      [not null, note: 'degenerate dimension']
+  turno               varchar(10)  [not null, note: 'degenerate dimension: Manha | Tarde | Noite']
   nota_final          decimal(4,2) [note: 'NULL se sem avaliação registrada']
   total_aulas         int          [not null]
   total_presencas     int          [not null]
@@ -580,8 +629,8 @@ Table ft_desempenho_academico {
 // salario_liquido é snapshot OLAP — não é campo derivado proibido (critério 4)
 Table ft_folha_rh {
   pk_id_fato        int           [primary key, increment]
-  fk_SK_funcionario int           [not null, ref: > dim_funcionario.SK_funcionario]
-  fk_SK_tempo       int           [not null, ref: > dim_tempo.SK_tempo]
+  fk_SK_funcionario int           [not null]
+  fk_SK_tempo       int           [not null]
   salario_bruto     decimal(10,2) [not null]
   total_proventos   decimal(10,2) [not null]
   total_descontos   decimal(10,2) [not null]
@@ -593,17 +642,63 @@ Table ft_folha_rh {
 // Permite análise de headcount, turnover e tempo médio de empresa
 Table ft_movimentacao_rh {
   pk_id_fato        int         [primary key, increment]
-  fk_SK_funcionario int         [not null, ref: > dim_funcionario.SK_funcionario]
-  fk_SK_tempo       int         [not null, ref: > dim_tempo.SK_tempo]
+  fk_SK_funcionario int         [not null]
+  fk_SK_tempo       int         [not null]
   tipo_movimentacao varchar(20) [not null, note: 'Admissao | Desligamento']
   dias_empresa      int         [not null, note: '0 na admissão; DATEDIFF na saída']
   data_evento       date        [not null]
+}
+
+// Grain: 1 linha por mensalidade com atraso registrado (atraso_mensalidade)
+// Métricas: dias_atraso, valor_multa, valor_juros, valor_em_aberto
+// recuperado: 1 se mensalidade.status = 'Pago' (quitada após o atraso)
+Table ft_inadimplencia {
+  pk_id_fato      int           [primary key, increment]
+  fk_SK_tempo     int           [not null, note: 'período da mensalidade (YYYYMM)']
+  fk_SK_aluno     int           [not null]
+  fk_SK_curso     int           [not null]
+  dias_atraso     int           [not null]
+  valor_multa     decimal(10,2) [not null]
+  valor_juros     decimal(10,2) [not null]
+  valor_em_aberto decimal(10,2) [not null, note: 'valor_liquido - total_pago no momento do ETL']
+  recuperado      tinyint       [not null, note: '1 se mensalidade quitada após atraso']
+}
+
+// Grain: 1 linha por (professor, turma, semestre letivo)
+// Sem fk_SK_tempo — semestre não tem granularidade mensal (degenerate dims)
+// turno: degenerate dim — valor direto da turma
+Table ft_carga_docente {
+  pk_id_fato         int           [primary key, increment]
+  fk_SK_professor    int           [not null]
+  fk_SK_curso        int           [not null]
+  fk_SK_materia      int           [not null]
+  ano_letivo         year          [not null, note: 'degenerate dimension']
+  semestre_letivo    tinyint       [not null, note: 'degenerate dimension']
+  turno              varchar(10)   [not null, note: 'degenerate dimension: Manha | Tarde | Noite']
+  qtd_alunos         int           [not null]
+  nota_media_turma   decimal(4,2)  [note: 'NULL se sem avaliação registrada']
+  presenca_media_pct decimal(5,2)  [not null]
+  qtd_aprovados      int           [not null]
+  qtd_reprovados     int           [not null]
+}
+
+// Grain: 1 linha por registro na tabela pagamento do OLTP (cashflow efetivo)
+// fk_SK_tempo: mês do pagamento EFETIVO — não do período da cobrança
+// Permite responder "quanto entrou no caixa em agosto?" independente do vencimento
+Table ft_pagamento {
+  pk_id_fato   int           [primary key, increment]
+  fk_SK_tempo  int           [not null, note: 'mês do pagamento efetivo (YYYYMM)']
+  fk_SK_aluno  int           [not null]
+  fk_SK_curso  int           [not null]
+  fk_SK_metodo int           [not null]
+  valor_pago   decimal(10,2) [not null]
 }
 
 // ============================================================
 // REFERÊNCIAS — TABELAS DE APOIO
 // ============================================================
 
+Ref: tipo_feriado.tipo              < feriado.tipo
 Ref: nivel_ensino.nivel            < curso.nivel_ensino
 Ref: status_aluno.status           < aluno.status
 Ref: status_matricula.status       < matricula.status
@@ -692,12 +787,45 @@ Ref: funcionario.rgf                  < historico_salario.fk_rgf
 Ref: funcionario.rgf                  < periodo_aquisitivo.fk_rgf
 Ref: periodo_aquisitivo.pk_id_periodo < ferias.fk_id_periodo
 Ref: periodo_aquisitivo.pk_id_periodo - abono_ferias.fk_id_periodo
+// Auto-relacionamento simétrico — fk_rgf_1 e fk_rgf_2 referenciam a mesma tabela
+Ref: funcionario.rgf < conjuge_funcionario.fk_rgf_1
+Ref: funcionario.rgf < conjuge_funcionario.fk_rgf_2
 
 // ============================================================
 // REFERÊNCIAS — STAR SCHEMA OLAP
 // ============================================================
 
+// ft_receita_mensalidade
 Ref: dim_tempo.SK_tempo     < ft_receita_mensalidade.fk_SK_tempo
 Ref: dim_aluno.SK_aluno     < ft_receita_mensalidade.fk_SK_aluno
 Ref: dim_curso.SK_curso     < ft_receita_mensalidade.fk_SK_curso
 Ref: dim_unidade.SK_unidade < ft_receita_mensalidade.fk_SK_unidade
+
+// ft_desempenho_academico
+Ref: dim_aluno.SK_aluno   < ft_desempenho_academico.fk_SK_aluno
+Ref: dim_curso.SK_curso   < ft_desempenho_academico.fk_SK_curso
+Ref: dim_materia.SK_materia < ft_desempenho_academico.fk_SK_materia
+
+// ft_folha_rh
+Ref: dim_funcionario.SK_funcionario < ft_folha_rh.fk_SK_funcionario
+Ref: dim_tempo.SK_tempo             < ft_folha_rh.fk_SK_tempo
+
+// ft_movimentacao_rh
+Ref: dim_funcionario.SK_funcionario < ft_movimentacao_rh.fk_SK_funcionario
+Ref: dim_tempo.SK_tempo             < ft_movimentacao_rh.fk_SK_tempo
+
+// ft_inadimplencia
+Ref: dim_tempo.SK_tempo  < ft_inadimplencia.fk_SK_tempo
+Ref: dim_aluno.SK_aluno  < ft_inadimplencia.fk_SK_aluno
+Ref: dim_curso.SK_curso  < ft_inadimplencia.fk_SK_curso
+
+// ft_carga_docente
+Ref: dim_professor.SK_professor < ft_carga_docente.fk_SK_professor
+Ref: dim_curso.SK_curso         < ft_carga_docente.fk_SK_curso
+Ref: dim_materia.SK_materia     < ft_carga_docente.fk_SK_materia
+
+// ft_pagamento
+Ref: dim_tempo.SK_tempo              < ft_pagamento.fk_SK_tempo
+Ref: dim_aluno.SK_aluno              < ft_pagamento.fk_SK_aluno
+Ref: dim_curso.SK_curso              < ft_pagamento.fk_SK_curso
+Ref: dim_metodo_pagamento.SK_metodo  < ft_pagamento.fk_SK_metodo

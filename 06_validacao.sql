@@ -196,6 +196,36 @@ CREATE INDEX idx_ffr_funcionario
 CREATE INDEX idx_fmr_tipo_tempo
     ON erp_escolar_olap.ft_movimentacao_rh (tipo_movimentacao, fk_SK_tempo);
 
+-- OLAP — ft_inadimplencia
+-- filtro mais comum: curso + tempo para sazonalidade de inadimplencia
+CREATE INDEX idx_fi_curso_tempo
+    ON erp_escolar_olap.ft_inadimplencia (fk_SK_curso, fk_SK_tempo);
+
+-- filtro de recuperacao: flag binario com baixa cardinalidade
+CREATE INDEX idx_fi_recuperado
+    ON erp_escolar_olap.ft_inadimplencia (recuperado);
+
+-- OLAP — ft_carga_docente
+-- queries mais frequentes: filtrar por professor ou por curso/materia
+CREATE INDEX idx_fcd_professor
+    ON erp_escolar_olap.ft_carga_docente (fk_SK_professor);
+
+CREATE INDEX idx_fcd_curso_materia
+    ON erp_escolar_olap.ft_carga_docente (fk_SK_curso, fk_SK_materia);
+
+-- OLAP — ft_pagamento
+-- analise de cashflow filtra por tempo e metodo
+CREATE INDEX idx_fpag_tempo
+    ON erp_escolar_olap.ft_pagamento (fk_SK_tempo);
+
+CREATE INDEX idx_fpag_metodo_tempo
+    ON erp_escolar_olap.ft_pagamento (fk_SK_metodo, fk_SK_tempo);
+
+-- OLAP — ft_desempenho_academico
+-- novo filtro por turno adicionado na expansao
+CREATE INDEX idx_fda_turno
+    ON erp_escolar_olap.ft_desempenho_academico (turno);
+
 -- ============================================================
 -- PARTE 4: EXPLAIN DEPOIS DOS INDICES
 -- Mesmas consultas da Parte 2 — comparar key e type
@@ -360,3 +390,88 @@ FROM ft_movimentacao_rh fm
 JOIN dim_tempo          dt ON dt.SK_tempo = fm.fk_SK_tempo
 GROUP BY dt.SK_tempo
 ORDER BY dt.SK_tempo;
+
+-- 6G: Inadimplencia — perfil de atraso por curso e sazonalidade
+-- Responde: qual curso tem mais inadimplencia? Em qual mes atrasos sao mais frequentes?
+--   Qual o custo total em multas e juros? Qual a taxa de recuperacao?
+SELECT
+    dc.nome_curso,
+    dt.nome_mes,
+    dt.ano,
+    COUNT(*)                                                              AS ocorrencias,
+    ROUND(AVG(fi.dias_atraso), 1)                                         AS media_dias_atraso,
+    SUM(fi.valor_multa)                                                   AS total_multas,
+    SUM(fi.valor_juros)                                                   AS total_juros,
+    SUM(fi.valor_em_aberto)                                               AS saldo_em_aberto,
+    SUM(fi.recuperado)                                                    AS qtd_recuperados,
+    ROUND(SUM(fi.recuperado) * 100.0 / COUNT(*), 1)                       AS taxa_recuperacao_pct
+FROM ft_inadimplencia  fi
+JOIN dim_curso         dc ON dc.SK_curso = fi.fk_SK_curso
+JOIN dim_tempo         dt ON dt.SK_tempo = fi.fk_SK_tempo
+GROUP BY dc.SK_curso, dt.SK_tempo
+ORDER BY total_multas DESC;
+
+-- 6H: Performance docente — nota media, presenca e taxa de aprovacao por professor
+-- Responde: qual professor tem as melhores turmas? Qual tem maior carga de alunos?
+--   Existe correlacao entre turno e aprovacao dentro de cada professor?
+SELECT
+    dp.nome_completo                                                      AS professor,
+    dp.especialidade,
+    dc.nome_curso,
+    dm.nome_materia,
+    fcd.turno,
+    fcd.ano_letivo,
+    fcd.semestre_letivo,
+    fcd.qtd_alunos,
+    fcd.nota_media_turma,
+    fcd.presenca_media_pct,
+    fcd.qtd_aprovados,
+    fcd.qtd_reprovados,
+    ROUND(fcd.qtd_aprovados * 100.0 / NULLIF(fcd.qtd_alunos, 0), 1)      AS taxa_aprovacao_pct
+FROM ft_carga_docente  fcd
+JOIN dim_professor     dp  ON dp.SK_professor = fcd.fk_SK_professor
+JOIN dim_curso         dc  ON dc.SK_curso     = fcd.fk_SK_curso
+JOIN dim_materia       dm  ON dm.SK_materia   = fcd.fk_SK_materia
+ORDER BY taxa_aprovacao_pct DESC, fcd.nota_media_turma DESC;
+
+-- 6I: Metodo de pagamento — adocao por mes e por curso
+-- Responde: qual metodo domina? Pix esta crescendo? Qual curso usa mais boleto?
+--   Qual o ticket medio por metodo?
+SELECT
+    dmp.nome_metodo,
+    dt.nome_mes,
+    dt.ano,
+    dc.nome_curso,
+    COUNT(*)                                                              AS transacoes,
+    SUM(fp.valor_pago)                                                    AS volume_total,
+    ROUND(AVG(fp.valor_pago), 2)                                          AS ticket_medio,
+    ROUND(SUM(fp.valor_pago) * 100.0
+        / SUM(SUM(fp.valor_pago)) OVER (PARTITION BY dt.SK_tempo), 1)    AS share_no_mes_pct
+FROM ft_pagamento           fp
+JOIN dim_metodo_pagamento   dmp ON dmp.SK_metodo = fp.fk_SK_metodo
+JOIN dim_tempo              dt  ON dt.SK_tempo   = fp.fk_SK_tempo
+JOIN dim_curso              dc  ON dc.SK_curso   = fp.fk_SK_curso
+GROUP BY dmp.SK_metodo, dt.SK_tempo, dc.SK_curso
+ORDER BY dt.SK_tempo, volume_total DESC;
+
+-- 6J: Desempenho academico por turno — alunos noturnos vs matutinos vs vespertinos
+-- Responde: o turno influencia nota e presenca? Qual turno aprova mais?
+--   Qual materia tem maior diferenca de desempenho entre turnos?
+SELECT
+    fda.turno,
+    dm.nome_materia,
+    dc.nome_curso,
+    COUNT(*)                                                              AS alunos_avaliados,
+    ROUND(AVG(fda.nota_final), 2)                                         AS nota_media,
+    ROUND(AVG(fda.percentual_presenca), 1)                                AS presenca_media_pct,
+    SUM(CASE WHEN fda.nota_final >= 6 THEN 1 ELSE 0 END)                  AS aprovados,
+    SUM(CASE WHEN fda.nota_final <  6 AND fda.nota_final IS NOT NULL
+                                      THEN 1 ELSE 0 END)                  AS reprovados,
+    ROUND(SUM(CASE WHEN fda.nota_final >= 6 THEN 1 ELSE 0 END)
+        * 100.0 / NULLIF(COUNT(*), 0), 1)                                 AS taxa_aprovacao_pct
+FROM ft_desempenho_academico fda
+JOIN dim_materia              dm  ON dm.SK_materia = fda.fk_SK_materia
+JOIN dim_curso                dc  ON dc.SK_curso   = fda.fk_SK_curso
+WHERE fda.nota_final IS NOT NULL
+GROUP BY fda.turno, dm.SK_materia, dc.SK_curso
+ORDER BY fda.turno, nota_media DESC;
